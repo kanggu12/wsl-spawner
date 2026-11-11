@@ -5,6 +5,8 @@ package distros
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -156,12 +158,25 @@ func ReadWithClock(ctx context.Context, sys wsl.System, c config.Config, now fun
 	return out, nil
 }
 
-// Probe reads what runs in one running distribution.
+// ErrReadInPart is a probe cut off at its limit: what it printed by then
+// is kept, as a probe that is not Complete, with this error beside it.
+var ErrReadInPart = errors.New("read in part, as its look ran out of time")
+
+// Probe reads what runs in one running distribution. A probe that runs out
+// of time gives what it read by then, with an error wrapping
+// ErrReadInPart: an engine whose daemon hangs must not hide the rest.
 func Probe(ctx context.Context, sys wsl.System, name string) (*inside.Probe, error) {
 	ctx, cancel := context.WithTimeout(ctx, ProbeLimit)
 	defer cancel()
 	out, err := sys.Run(ctx, name, "root", inside.ProbeScript())
 	if err != nil {
+		// Cut off, it still said something of its own: kept, marked as
+		// not complete, and said so.
+		if errors.Is(err, wsl.ErrNoAnswer) {
+			if p, perr := inside.Parse(out); perr == nil {
+				return &p, fmt.Errorf("%w: %w", ErrReadInPart, err)
+			}
+		}
 		return nil, err
 	}
 	p, err := inside.Parse(out)

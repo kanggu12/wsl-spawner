@@ -399,7 +399,7 @@ func statusJSON(wslVersion string, ds []distros.Distro, c config.Config) api.Sta
 		if pr := d.Probe; pr != nil {
 			po := &api.Probe{Systemd: pr.Systemd, Interop: pr.Interop, KeptRunning: pr.KeptRunning(), SetUp: pr.SetUp(),
 				LiveRestore: pr.LiveRestore, Engines: pr.Engines, Containers: []api.Container{},
-				Hooks: nonNil(pr.Hooks), Failed: nonNil(pr.Failed), Bring: []string{}}
+				Hooks: nonNil(pr.Hooks), Failed: nonNil(pr.Failed), Bring: []string{}, Complete: pr.Complete}
 			for _, c := range pr.Containers {
 				po.Containers = append(po.Containers, api.Container{Engine: c.Engine, ID: c.ID, Name: c.Name, State: c.State,
 					Policy: c.Policy, StopSeconds: int(c.Wait() / time.Second), Image: c.Image, Project: c.Project, AutoRemove: c.AutoRemove})

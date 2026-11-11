@@ -3,6 +3,7 @@ package distros
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -151,5 +152,33 @@ func TestAWSLThatDoesNotListIsAnError(t *testing.T) {
 	f.DistrosErr = wsl.ErrNoAnswer
 	if _, err := Read(context.Background(), f, config.Default()); !errors.Is(err, wsl.ErrNoAnswer) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAProbeCutOffAtItsLimitKeepsWhatItRead(t *testing.T) {
+	// The probe runs out of time after it read systemd and before its end,
+	// as one waiting on a daemon that hangs does: what it read is kept, not
+	// complete, with the error beside it.
+	f := madeUp()
+	f.Script = func(distro, user, script string) (string, error) {
+		return "probe=1\nsystemd=running\nengine=docker\n", fmt.Errorf("%w: wsl ran for 1m30s", wsl.ErrNoAnswer)
+	}
+	p, err := Probe(context.Background(), f, "Ubuntu-24.04")
+	if p == nil || p.Complete || p.Systemd != "running" || !errors.Is(err, ErrReadInPart) || !errors.Is(err, wsl.ErrNoAnswer) {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// Out of time with nothing of the probe's own: nothing is made up.
+	f.Script = func(distro, user, script string) (string, error) {
+		return "", fmt.Errorf("%w: wsl ran for 1m30s", wsl.ErrNoAnswer)
+	}
+	if p, err := Probe(context.Background(), f, "Ubuntu-24.04"); p != nil || err == nil || errors.Is(err, ErrReadInPart) {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// Any other failure keeps what it printed out of it.
+	f.Script = func(distro, user, script string) (string, error) {
+		return "probe=1\nsystemd=running\n", errors.New("exit status 1")
+	}
+	if p, err := Probe(context.Background(), f, "Ubuntu-24.04"); p != nil || err == nil {
+		t.Fatalf("%+v %v", p, err)
 	}
 }

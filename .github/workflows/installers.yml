@@ -144,7 +144,9 @@ jobs:
 
   demo-image:
     name: the demo image
-    runs-on: ubuntu-latest
+    # A fixed Ubuntu: ubuntu-latest moves to a new release on its own, with
+    # other packages, as it is moving to Ubuntu 26.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

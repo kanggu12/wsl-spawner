@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -364,5 +365,31 @@ func TestStopEventsComeOneLineEach(t *testing.T) {
 	// Without --json, --events is a mistake.
 	if _, errOut, code := cli(t, a, false, "stop", "--yes", "--events", "Ubuntu-24.04"); code != exitUsage || !strings.Contains(errOut, "--events goes with --json") {
 		t.Fatalf("exit %d: %s", code, errOut)
+	}
+}
+
+func TestStatusSaysAProbeReadInPart(t *testing.T) {
+	// The probe of Ubuntu-24.04 runs out of time after systemd: the table
+	// and the JSON keep what it read, and say it was read in part.
+	a, f := pc(t)
+	f.Script = func(distro, user, script string) (string, error) {
+		if script == inside.ProbeScript() {
+			return "probe=1\nsystemd=running\n", fmt.Errorf("%w: wsl ran for 1m30s", wsl.ErrNoAnswer)
+		}
+		return "", errors.New("unexpected script")
+	}
+	out, _, code := cli(t, a, false, "status")
+	if code != exitOK || !strings.Contains(out, "! Ubuntu-24.04: read in part, as its look ran out of time") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	out, _, _ = cli(t, a, false, "status", "--json")
+	var got api.Status
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range got.List {
+		if d.Name == "Ubuntu-24.04" && (d.Probe == nil || d.Probe.Complete || d.Probe.Systemd != "running" || !strings.Contains(d.ProbeError, "read in part")) {
+			t.Fatalf("%+v %+v", d, d.Probe)
+		}
 	}
 }

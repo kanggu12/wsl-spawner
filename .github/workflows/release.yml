@@ -16,7 +16,9 @@ jobs:
 
   release:
     needs: ci
-    runs-on: ubuntu-latest
+    # A fixed Ubuntu: ubuntu-latest moves to a new release on its own, with
+    # other packages, as it is moving to Ubuntu 26.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       # Build provenance: GitHub signs which workflow built the zips.
@@ -80,7 +82,9 @@ jobs:
   # The demo image: the screen on a made-up PC, without installing anything.
   demo-image:
     needs: ci
-    runs-on: ubuntu-latest
+    # A fixed Ubuntu: ubuntu-latest moves to a new release on its own, with
+    # other packages, as it is moving to Ubuntu 26.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write

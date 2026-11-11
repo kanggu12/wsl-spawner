@@ -19,7 +19,9 @@ jobs:
     # Ubuntu with systemd and Docker Engine, a pre-stop hook, and a service
     # whose stop takes 40 seconds (.github/wsl).
     name: the lab distribution
-    runs-on: ubuntu-latest
+    # A fixed Ubuntu: ubuntu-latest moves to a new release on its own, with
+    # other packages, as it is moving to Ubuntu 26.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       ROOTFS: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.4-x86_64.tar.gz

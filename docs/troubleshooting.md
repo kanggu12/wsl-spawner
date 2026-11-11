@@ -74,6 +74,9 @@ stop it with `wsl-spawner stop` before stopping WSL by hand.
 `WSL did not answer in time`: WSL may be starting or updating. Try again in a minute. wsl-spawner never starts a
 distribution only to read it.
 
+`read in part, as its look ran out of time`: what runs in the distribution was read up to its limit, often a container
+engine whose daemon does not answer. What was read stands; `docker info` inside says whether the daemon answers.
+
 ## The screen in a WSL terminal
 
 - `wsl-spawner.exe was not found`: the folder of the install is not on the Windows PATH WSL passes in. Open a new

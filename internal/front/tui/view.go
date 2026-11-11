@@ -624,8 +624,13 @@ func (m model) details(w, h int) (lines []string, recentIn bool) {
 		return cut(lines, h), false
 	}
 	p := d.Probe
-	if p == nil && d.Running && d.ProbeError != "" {
+	switch {
+	case p == nil && d.Running && d.ProbeError != "":
 		lines = append(lines, ui.Fg(t.Muted).Render(ui.Fit(d.ProbeError, w)))
+	case p != nil && !p.Complete && d.ProbeError != "":
+		// Read in part: said in the color of what is worth a look, as
+		// what follows may leave something out.
+		lines = append(lines, ui.Fg(t.Cat[ui.CatWarn]).Render(ui.Fit(d.ProbeError, w)))
 	}
 	// side are the sections beside the containers, laid out in cw cells.
 	side := func(cw int) []section {

@@ -6,6 +6,14 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-12
+
+### Fixed
+
+- A distribution whose look runs out of time, as one with a container engine that hangs does, keeps what was read by
+  then: the screen, `status` and `check` show it and say it was read in part, and `status --json` gives
+  `complete: false` beside `probe_error`. Nothing of it was shown before.
+
 ## [0.1.0] - 2026-11-12
 
 The first release.
@@ -37,5 +45,6 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.0

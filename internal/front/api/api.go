@@ -57,6 +57,9 @@ type (
 		// Resumed is what came back at its last start, at ResumedAt.
 		Resumed   []Resumed  `json:"resumed"`
 		ResumedAt *time.Time `json:"resumed_at"`
+		// Complete is false for a probe cut off before its end: what it
+		// holds is what it read by then, and probe_error says why.
+		Complete bool `json:"complete"`
 	}
 	// LastStop is wsl-spawner's last stop of a distribution.
 	LastStop struct {

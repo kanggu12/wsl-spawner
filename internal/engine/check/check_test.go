@@ -45,7 +45,7 @@ func setUp() *inside.Probe {
 		Units:       map[string]inside.Unit{inside.KeepAliveUnit: {Active: "active", Enabled: "enabled"}},
 		Runs:        []inside.Run{{ID: "b@100", At: now.Add(-time.Hour)}, {ID: "b@300", At: now}},
 		LastStop:    &inside.StopRecord{Run: "b@100", Result: "clean", At: now.Add(-time.Minute)},
-		Engines:     map[string]bool{"docker": true}}
+		Engines:     map[string]bool{"docker": true}, Complete: true}
 }
 
 // base is a PC where all is as it should be: the hook last, Windows waiting
@@ -193,7 +193,7 @@ func TestDistributionsThatAreNotReadSayWhy(t *testing.T) {
 		{Distro: wsl.Distro{Name: "Off", Version: 2}},
 		{Distro: wsl.Distro{Name: "Mine", Version: 2}, Skipped: true},
 		{Distro: wsl.Distro{Name: "Odd", Version: 2, Running: true}, ProbeErr: errors.New("boom\nmore")},
-		{Distro: wsl.Distro{Name: "Bare", Version: 2, Running: true}, Probe: &inside.Probe{Engines: map[string]bool{"docker": false}}},
+		{Distro: wsl.Distro{Name: "Bare", Version: 2, Running: true}, Probe: &inside.Probe{Engines: map[string]bool{"docker": false}, Complete: true}},
 	}
 	gs := Run(in)
 	for name, want := range map[string][]string{
@@ -279,7 +279,7 @@ func TestTheHistorysLastStopIsSaidWhereNothingInsideNotesIt(t *testing.T) {
 	in.Logon = Logon{}
 	in.Distros = []distros.Distro{
 		{Distro: wsl.Distro{Name: "Off", Version: 2}},
-		{Distro: wsl.Distro{Name: "Bare", Version: 2, Running: true}, Probe: &inside.Probe{Systemd: "running", Engines: map[string]bool{}}},
+		{Distro: wsl.Distro{Name: "Bare", Version: 2, Running: true}, Probe: &inside.Probe{Systemd: "running", Engines: map[string]bool{}, Complete: true}},
 		{Distro: wsl.Distro{Name: "Dev", Version: 2, Running: true}, Probe: setUp(), Asked: now, Answered: now},
 		{Distro: wsl.Distro{Name: "Mine", Version: 2}, Skipped: true},
 	}
@@ -302,5 +302,18 @@ func TestTheHistorysLastStopIsSaidWhereNothingInsideNotesIt(t *testing.T) {
 	// When it is said, the stop's time goes with it.
 	if it := find(t, gs, "check.g.distro", "Off").Items[1]; it.Args[0] != stamp(at) {
 		t.Fatalf("%+v", it)
+	}
+}
+
+func TestAProbeReadInPartIsSaidFirst(t *testing.T) {
+	// Cut off before its end, the probe says less than it seems: the check
+	// says so before what it read, and why.
+	in := base()
+	p := setUp()
+	p.Complete = false
+	in.Distros[0].Probe, in.Distros[0].ProbeErr = p, errors.New("read in part, as its look ran out of time: WSL did not answer in time")
+	g := find(t, Run(in), "check.g.distro", "Dev")
+	if got := keys(g); len(got) == 0 || got[0] != "warn:d.partial" || !strings.Contains(g.Items[0].Args[0].(string), "ran out of time") {
+		t.Fatalf("%q %+v", got, g.Items)
 	}
 }

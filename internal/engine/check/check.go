@@ -239,6 +239,15 @@ func distro(in Inputs, d distros.Distro) Group {
 		add(Item{Mark: Warn, Key: "check.d.unread", Args: []any{errText(d.ProbeErr)}})
 		return g
 	}
+	// Cut off before its end: what follows is what it read by then, and
+	// what it did not read is not said to be fine.
+	if !p.Complete {
+		why := errText(d.ProbeErr)
+		if why == "" {
+			why = "its look ended before its last line"
+		}
+		add(Item{Mark: Warn, Key: "check.d.partial", Args: []any{why}})
+	}
 	switch p.Systemd {
 	case "":
 		add(Item{Mark: Warn, Key: "check.d.nosystemd", Do: "check.d.do.systemd", DoArgs: []any{d.Name}})

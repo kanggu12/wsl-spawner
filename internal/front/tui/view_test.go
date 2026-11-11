@@ -134,3 +134,22 @@ func TestAContainerRemovedAsItStopsIsNeverSaidToComeBack(t *testing.T) {
 		t.Fatalf("the count:\n%s", f)
 	}
 }
+
+func TestTheDetailsSayAProbeReadInPart(t *testing.T) {
+	// What was read stands, under a line, in the color of what is worth a
+	// look, that says the look ran out of time.
+	p := &api.Probe{Systemd: "running", Engines: map[string]bool{"docker": true}, LastEnd: api.End{How: "unknown"}}
+	m := newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded = 120, 30, true
+	m.st = api.Status{WSL: "3.0.5.0", StopLimit: 300, Resume: "running", List: []api.Distro{{Name: "Ubuntu-24.04", Running: true, Kind: "stop-only", Version: 2, Probe: p,
+		ProbeError: "read in part, as its look ran out of time: WSL did not answer in time"}}}
+	if f := ansi.Strip(m.View().Content); !strings.Contains(f, "read in part, as its look ran out of time") {
+		t.Fatalf("%s", f)
+	}
+	// Read to its end, no such line.
+	p.Complete = true
+	m.st.List[0].ProbeError = ""
+	if f := ansi.Strip(m.View().Content); strings.Contains(f, "read in part") {
+		t.Fatalf("%s", f)
+	}
+}

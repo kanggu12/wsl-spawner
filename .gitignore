@@ -1,0 +1,7 @@
+/dist/
+/scratch/
+/_work/
+*.swp
+.DS_Store
+/vendor/
+/.github/wsl/alpine.tar.gz

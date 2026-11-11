@@ -1,0 +1,4 @@
+#!/bin/sh
+# A pre-stop hook: it leaves the time it ran, so the workflow sees each stop
+# of wsl-spawner's ran it.
+date +%s >> /var/lib/lab/hook

@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    # A version tag publishes a release.
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # A release is built only from a commit that passes every check, on Linux
+  # and on each Windows.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build provenance: GitHub signs which workflow built the zips.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # The job writes the release through gh, never through git: no
+          # token stays in the checkout for a later step to find.
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The newest patch of the Go release go.mod names: it carries the
+          # standard library's security fixes.
+          go-version: "1.26.x"
+          # The release is built from nothing another job could have put
+          # in a cache.
+          cache: false
+      - name: the tag, CHANGELOG.md and the notes agree
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          # The section for this tag, up to the next "## " heading, is the release notes.
+          awk -v tag="$v" '
+            $0 ~ "^## \\[?" tag "\\]?( |$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md" || { echo "CHANGELOG.md has no section for $GITHUB_REF_NAME"; exit 1; }
+      - run: sudo apt-get update && sudo apt-get install -y zip
+      - name: the zips, checksums and Scoop manifest
+        run: scripts/dist.sh "${GITHUB_REF_NAME#v}"
+      # Anyone can check a zip came from this workflow, on this tag:
+      # gh attestation verify <zip> -R kanggu12/wsl-spawner
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.zip
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets="dist/*.zip dist/checksums.txt dist/install.ps1 dist/wsl-spawner.json"
+          # A run started again after the release went out puts the same
+          # files back rather than failing on the release that is there.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            gh release upload "$GITHUB_REF_NAME" $assets --clobber
+            exit 0
+          fi
+          # A tag with a hyphen (v0.2.0-rc.1) is a pre-release: GitHub's
+          # "latest", which install.ps1, its one-line install and Scoop
+          # follow, skips it; any other release becomes the latest.
+          case "$GITHUB_REF_NAME" in *-*) set -- --prerelease ;; *) set -- --latest ;; esac
+          # The release is named by its tag alone (v0.6.2), as the sibling
+          # projects' releases are.
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" $assets \
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" "$@"
+
+  # The demo image: the screen on a made-up PC, without installing anything.
+  demo-image:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The image is pushed with docker's own login, never through git.
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: v
+        run: |
+          # The tag without its v, the owner in lower case, which ghcr wants,
+          # and the commit, so `wsl-spawner version` in the image names it.
+          {
+            echo "version=${GITHUB_REF_NAME#v}"
+            echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
+            echo "date=$(git log -1 --date=format-local:%Y-%m-%d --format=%cd)"
+            echo "commit=$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          # A pre-release does not move "latest".
+          case "$GITHUB_REF_NAME" in
+            *-*) echo "latest=" >> "$GITHUB_OUTPUT" ;;
+            *) echo "latest=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wsl-spawner-demo:latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+        env:
+          TZ: UTC
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/demo.Dockerfile
+          # Go cross-compiles in the build stage, so arm64 needs no emulation.
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ steps.v.outputs.commit }}
+            DATE=${{ steps.v.outputs.date }}
+          push: true
+          tags: |
+            ghcr.io/${{ steps.v.outputs.owner }}/wsl-spawner-demo:${{ steps.v.outputs.version }}
+            ${{ steps.v.outputs.latest }}
+          # The label GitHub reads to show the package on the repository page,
+          # on each image and on the index of both, which the package page reads.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Try the wsl-spawner screen on a made-up PC
+            org.opencontainers.image.licenses=MIT
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.description=Try the wsl-spawner screen on a made-up PC
+            index:org.opencontainers.image.licenses=MIT
+          # Provenance for the image too, kept in the registry beside it.
+          provenance: mode=max
+
+  # The installers as people run them, from the release just published.
+  installers:
+    needs: [release, demo-image]
+    # The demo image's check pulls it as this repository.
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/installers.yml
+    with:
+      version: ${{ github.ref_name }}

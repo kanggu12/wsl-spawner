@@ -1,0 +1,13 @@
+# A service whose stop takes 40 seconds: WSL's own stop gives it about 10.
+# Its log says when it started and whether its stop ran to the end.
+[Unit]
+Description=A service whose stop takes 40 seconds
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'echo started >> /var/lib/lab/log; exec sleep infinity'
+ExecStop=/bin/sh -c 'sleep 40; echo stopped >> /var/lib/lab/log'
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

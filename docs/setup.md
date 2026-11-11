@@ -1,0 +1,87 @@
+# Setup
+
+## Requirements
+
+- **Windows 10 or 11**, x64 or ARM64, with **WSL 2**. A WSL 1 distribution is listed and left be.
+- **systemd** in the distributions you set wsl-spawner up in (`[boot] systemd=true` in `/etc/wsl.conf`): the start
+  script and the keep-running service are systemd's. A stop works without it.
+- **Windows programs in WSL** (`[interop] enabled=true`, WSL's default) for keeping a distribution running.
+- **The sign-out hook** uses the local Group Policy's sign-out scripts, which Windows 10 and 11 Pro, Enterprise and
+  Education run. On Windows Home it installs as well; whether Home runs it has not been seen, so `wsl-spawner history`
+  after a sign-out says whether it ran. Installing and removing it needs an administrator.
+- **PowerShell** 5.1 (Windows' own) or 7 for `install.ps1`.
+
+## Install
+
+In PowerShell, as you, not as an administrator:
+
+```powershell
+irm https://github.com/kanggu12/wsl-spawner/releases/latest/download/install.ps1 | iex
+```
+
+It picks the build for the PC's processor, checks it against the release's `checksums.txt`, puts `wsl-spawner.exe`,
+`wsl-spawnerw.exe` (the same program with no console, which the sign-in program and the sign-out hook start) and the
+WSL launcher `wsl-spawner` in `%LOCALAPPDATA%\Programs\wsl-spawner`, adds that folder to your PATH, and opens setup
+the first time. Open a new terminal, PowerShell or WSL, and run `wsl-spawner`.
+
+| Variable | Does |
+|:---|:---|
+| `WSL_SPAWNER_VERSION` | a release to install, like `v0.1.0` (default: the latest) |
+| `WSL_SPAWNER_BIN_DIR` | where it goes (default: `%LOCALAPPDATA%\Programs\wsl-spawner`) |
+| `WSL_SPAWNER_NO_SETUP=1` | no setup after the install |
+| `WSL_SPAWNER_BASE_URL` | where the releases are downloaded from, for a mirror |
+| `WSL_SPAWNER_ZIP` | a zip downloaded already, installed as it is |
+| `WSL_SPAWNER_UNINSTALL=1` | remove wsl-spawner instead ([Remove](#remove)) |
+| `WSL_SPAWNER_PURGE=1` | with `WSL_SPAWNER_UNINSTALL`, the settings and the history too |
+
+With Scoop:
+
+```powershell
+scoop install https://github.com/kanggu12/wsl-spawner/releases/latest/download/wsl-spawner.json
+```
+
+By hand: download `wsl-spawner_VERSION_windows_amd64.zip` (or `_arm64`) from the release, check it against
+`checksums.txt`, and put its three files in a folder on your PATH, together.
+
+The launcher finds `wsl-spawner.exe` beside it or on the Windows PATH WSL passes into a distribution. A distribution
+with `appendWindowsPath = false` needs the folder on its own PATH.
+
+From source, with Go: `make build` puts the three files in `dist/`.
+
+## Upgrade
+
+Run the install again; `scoop update wsl-spawner` with Scoop. The settings, the history, the sign-out hook and the
+sign-in program stay as they are: they name the same files. Close the wsl-spawner screens first: a running copy holds
+its files, and the install says so.
+
+## Remove
+
+```powershell
+wsl-spawner uninstall
+```
+
+It says what it removes and asks first. It takes out the sign-out hook (Windows asks for an administrator; without that,
+nothing is removed, as a hook left behind would start a program that is gone at every sign-out), the sign-in program,
+and what it set up in each running distribution; a stopped one is named, and what wsl-spawner set up in it stays: run
+`wsl-spawner set NAME --managed=false` before uninstalling, which starts it to take that out, or later, inside it,
+`systemctl disable --now wsl-spawner-keepalive.service wsl-spawner.service`, then remove
+`/etc/systemd/system/wsl-spawner*.service`, `/usr/local/lib/wsl-spawner` and `/var/lib/wsl-spawner`. Then the three
+files, and their folder and PATH entry when the folder is named `wsl-spawner` and holds nothing else; a folder of your
+own (`WSL_SPAWNER_BIN_DIR`) and its PATH entry stay. The settings and the history stay unless `--purge` is given. The
+copies of the Group Policy files from before the first install (`*.before-wsl-spawner`) stay too.
+
+Installed with Scoop: `wsl-spawner uninstall --purge` takes out what it put on the PC and the settings, then
+`scoop uninstall wsl-spawner`. Without the program, the install script removes what an install put there: the
+three files, the sign-in program when it starts that folder's program, the folder and its PATH entry when the folder is
+named `wsl-spawner`, and with `WSL_SPAWNER_PURGE=1` only wsl-spawner's own settings and history files. While the
+sign-out hook still starts that folder's program it removes nothing: install again, then `wsl-spawner uninstall`.
+
+```powershell
+$env:WSL_SPAWNER_UNINSTALL = 1; irm https://github.com/kanggu12/wsl-spawner/releases/latest/download/install.ps1 | iex
+```
+
+## Versions
+
+wsl-spawner is tested on Windows Server 2025 with WSL 3.0.3 (its CI), on Windows 11 with WSL 3.0.5, and builds for
+ARM64 too. The version it runs on is in `wsl-spawner check`. The WSL built into Windows Server 2022 runs WSL 1
+distributions only, which wsl-spawner lists and leaves be.

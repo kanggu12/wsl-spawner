@@ -1,0 +1,39 @@
+name: Bug report
+description: A stop that cut a service short, a container that did not come back, a step that failed, or something that does not work as the docs say.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: "`wsl-spawner check`"
+      description: Replace a private path or name with any placeholder.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: history
+    attributes:
+      label: "`wsl-spawner history --json`"
+      description: The stop or start in question.
+      render: json
+  - type: textarea
+    id: status
+    attributes:
+      label: "`wsl-spawner status --json`"
+      description: For a distribution, container or hook it read wrong.
+      render: json
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: What `wsl-spawner version` prints, the first line of `wsl --version`, the Windows edition, version and processor, and for an install problem the PowerShell version (`$PSVersionTable.PSVersion`).
+      placeholder: wsl-spawner v0.1.0 (abc1234, 2026-11-12), WSL 3.0.5.0, Windows 11 Pro 24H2 x64, PowerShell 7.5
+    validations:
+      required: true

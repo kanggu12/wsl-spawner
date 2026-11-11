@@ -1,0 +1,287 @@
+name: wsl
+
+# Real stops and starts on a real WSL 2, called by CI on every change and by
+# the weekly canary on WSL's newest pre-release.
+on:
+  workflow_call:
+    inputs:
+      pre-release:
+        description: update WSL to its newest pre-release first
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    # The throwaway distribution, built where Docker builds Linux images:
+    # Ubuntu with systemd and Docker Engine, a pre-stop hook, and a service
+    # whose stop takes 40 seconds (.github/wsl).
+    name: the lab distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ROOTFS: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.4-x86_64.tar.gz
+      ROOTFS_SHA256: cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build it and export its root file system
+        run: |
+          # The containers' image inside the lab: Alpine's root file system,
+          # checked, so no registry is reached from the Windows runner.
+          curl -fsSL --retry 3 -o .github/wsl/alpine.tar.gz "$ROOTFS"
+          echo "$ROOTFS_SHA256  .github/wsl/alpine.tar.gz" | sha256sum -c -
+          docker build -f .github/wsl/lab.Dockerfile -t wsp-lab .github/wsl
+          docker export "$(docker create wsp-lab true)" | gzip -1 > lab.tar.gz
+          ls -l lab.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lab
+          path: lab.tar.gz
+          retention-days: 1
+          # gzip already.
+          compression-level: 0
+
+  stops:
+    # Windows Server 2025's runners carry the WSL package and run WSL 2
+    # distributions. The lab is set up and kept running; stopped, it gives
+    # its service its 40 seconds and its slow container its 20, then starts
+    # again with its containers; WSL alone cuts the service short, and the
+    # next look says so. Then the sign-out hook is installed, run as Windows
+    # runs it, and removed; the start at sign-in is added, run and removed;
+    # and wsl-spawner is taken out of the lab.
+    name: stops and starts on WSL 2${{ inputs.pre-release && ' (WSL pre-release)' || '' }}
+    needs: lab
+    runs-on: windows-2025
+    # WSL 2 has been seen to hang while it starts on these runners; only the
+    # job's own limit ends that.
+    timeout-minutes: 40
+    env:
+      LAB: wsp-ci
+      # wsl.exe's lists in UTF-8, where it honours it.
+      WSL_UTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lab
+          path: lab
+      # The canary's: WSL's newest pre-release, what the next WSL release
+      # will be, from GitHub, as the runner has no Store.
+      - name: WSL's newest pre-release
+        if: inputs.pre-release
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          wsl.exe --version
+          wsl.exe --update --pre-release --web-download
+          if ($LASTEXITCODE -ne 0) { "wsl --update --pre-release exited $LASTEXITCODE"; exit 1 }
+          wsl.exe --version
+      - name: the program, and the lab running its three containers, set up and kept running
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Both builds, side by side as a release has them: the sign-in
+          # program and the sign-out hook start the one with no console.
+          go build -o dist/wsl-spawner.exe ./cmd/wsl-spawner
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          go build -ldflags '-H windowsgui' -o dist/wsl-spawnerw.exe ./cmd/wsl-spawner
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # Settings and history in a folder of the job's own, for every step.
+          $state = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'state')).FullName
+          "APPDATA=$state" >> $env:GITHUB_ENV
+          "LOCALAPPDATA=$state" >> $env:GITHUB_ENV
+          $env:APPDATA = $env:LOCALAPPDATA = $state
+          wsl.exe --version
+          wsl.exe --import $env:LAB (Join-Path $env:RUNNER_TEMP 'lab') lab/lab.tar.gz --version 2
+          if ($LASTEXITCODE -ne 0) { "wsl --import exited $LASTEXITCODE"; exit 1 }
+          # WSL stops a distribution within half a minute of nothing from
+          # Windows running in it: this step runs one command after another
+          # until wsl-spawner keeps it running.
+          $up = $false
+          foreach ($i in 1..90) {
+            $s = (wsl.exe -d $env:LAB -u root -- systemctl is-system-running) -join ''
+            if ($s -match 'running|degraded') { $up = $true; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $up) { wsl.exe -d $env:LAB -u root -- systemctl --failed --no-pager; 'systemd did not start in the lab'; exit 1 }
+          wsl.exe -d $env:LAB -u root -- /opt/lab/containers.sh
+          if ($LASTEXITCODE -ne 0) { wsl.exe -d $env:LAB -u root -- journalctl -u docker --no-pager -n 40; 'the containers did not start'; exit 1 }
+          ./dist/wsl-spawner.exe set $env:LAB --keep --yes
+          if ($LASTEXITCODE -ne 0) { "set --keep exited $LASTEXITCODE"; exit 1 }
+          # Nothing from Windows runs in it now: only wsl-spawner keeps it.
+          Start-Sleep -Seconds 45
+          $running = ((wsl.exe --list --running --quiet) -join "`n") -replace "`0", ''
+          if ($running -notmatch "(?m)^$env:LAB\s*$") { $running; 'the lab stopped: --keep did not keep it running'; exit 1 }
+          $d = (./dist/wsl-spawner.exe status --json | ConvertFrom-Json).distributions | Where-Object name -eq $env:LAB
+          if (-not $d.running -or $d.kind -ne 'set-up' -or -not $d.probe.kept_running) { $d | ConvertTo-Json -Depth 8; 'the lab is not read as set up and kept running'; exit 1 }
+          if (@($d.probe.containers | Where-Object state -eq 'running').Count -ne 2) { $d.probe.containers | ConvertTo-Json; 'not the two containers running'; exit 1 }
+          exit 0
+      - name: a stop gives each its time, and a start brings the containers back
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $t = [Diagnostics.Stopwatch]::StartNew()
+          $out = ./dist/wsl-spawner.exe stop $env:LAB --yes --json
+          $code = $LASTEXITCODE
+          $t.Stop()
+          $out
+          if ($code -ne 0) { "stop exited $code"; exit 1 }
+          $r = ($out | ConvertFrom-Json).results[0]
+          "the stop: $($r.result) in $($r.took_seconds) s, $([int]$t.Elapsed.TotalSeconds) s in all"
+          if ($r.result -ne 'clean') { "the stop ended $($r.result), not clean"; exit 1 }
+          # The service's 40 seconds, then the slow container's 20.
+          if ($t.Elapsed.TotalSeconds -lt 60) { 'the stop took less than its service and container ask for'; exit 1 }
+          $running = ((wsl.exe --list --running --quiet) -join "`n") -replace "`0", ''
+          if ($running -match "(?m)^$env:LAB\s*$") { 'the lab still runs after its stop'; exit 1 }
+          $out = ./dist/wsl-spawner.exe start $env:LAB --json
+          if ($LASTEXITCODE -ne 0) { $out; "start exited $LASTEXITCODE"; exit 1 }
+          $out
+          $came = @{}
+          foreach ($c in ($out | ConvertFrom-Json).results[0].came_back) { $came[$c.name] = $c.what }
+          # The one with no restart policy only wsl-spawner brings back; the
+          # one with a policy is back by Docker; the one stopped by hand
+          # stays stopped.
+          if ($came['slow'] -ne 'started') { "slow: $($came['slow']), not started"; exit 1 }
+          if ($came['policy'] -ne 'running') { "policy: $($came['policy']), not running"; exit 1 }
+          if ($came.ContainsKey('manual')) { 'the container stopped by hand was brought back'; exit 1 }
+          $ps = wsl.exe -d $env:LAB -u root -- docker ps -a --format '{{.Names}} {{.State}}'
+          $ps
+          foreach ($line in 'slow running', 'policy running', 'manual exited') {
+            if ($ps -notcontains $line) { "no '$line' in docker ps -a"; exit 1 }
+          }
+          # What the lab says of the stop: the service's stop ran to its end,
+          # the slow container's TERM handler too, and the hook ran first.
+          $log = wsl.exe -d $env:LAB -u root -- cat /var/lib/lab/log
+          "the service's log: $($log -join ', ')"
+          if (@($log | Where-Object { $_ -eq 'stopped' }).Count -ne 1) { "the service's stop did not run to its end"; exit 1 }
+          wsl.exe -d $env:LAB -u root -- test -s /var/lib/lab/slow-ended
+          if ($LASTEXITCODE -ne 0) { "the slow container's TERM handler did not end"; exit 1 }
+          if (@(wsl.exe -d $env:LAB -u root -- cat /var/lib/lab/hook).Count -ne 1) { 'the pre-stop hook did not run once'; exit 1 }
+          $d = (./dist/wsl-spawner.exe status --json | ConvertFrom-Json).distributions | Where-Object name -eq $env:LAB
+          if ($d.probe.last_end.how -ne 'clean') { $d.probe | ConvertTo-Json -Depth 6; "the last start ended $($d.probe.last_end.how), not clean"; exit 1 }
+          exit 0
+      - name: WSL alone cuts the service short, and the next look says so
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          wsl.exe --terminate $env:LAB
+          if ($LASTEXITCODE -ne 0) { "wsl --terminate exited $LASTEXITCODE"; exit 1 }
+          $up = $false
+          foreach ($i in 1..90) {
+            $s = (wsl.exe -d $env:LAB -u root -- systemctl is-system-running) -join ''
+            if ($s -match 'running|degraded') { $up = $true; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $up) { 'systemd did not start in the lab again'; exit 1 }
+          $log = wsl.exe -d $env:LAB -u root -- cat /var/lib/lab/log
+          "the service's log: $($log -join ', ')"
+          if (@($log | Where-Object { $_ -eq 'stopped' }).Count -ne 1) { "WSL let the service's stop run to its end: the 40 seconds no longer show what WSL cuts"; exit 1 }
+          $d = (./dist/wsl-spawner.exe status --json | ConvertFrom-Json).distributions | Where-Object name -eq $env:LAB
+          if ($d.probe.last_end.how -ne 'cut') { $d.probe | ConvertTo-Json -Depth 6; "the last start ended $($d.probe.last_end.how), not cut"; exit 1 }
+          # The check says it too; it exits 3 for a finding marked bad.
+          ./dist/wsl-spawner.exe check
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) { "check exited $LASTEXITCODE"; exit 1 }
+          exit 0
+      - name: the sign-out hook, installed, run as Windows runs it, and removed
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # The runner's account is an administrator, so the change needs no
+          # question. Exit 3 is a hook in the policy's files that Windows has
+          # not read yet: gpupdate may not read user policy for the job's
+          # account. This step looks at the files and the hook's own run.
+          ./dist/wsl-spawner.exe hook install --yes
+          $code = $LASTEXITCODE
+          if ($code -eq 3) { 'hook install: in the policy, but Windows has not read it yet (its words are above)' }
+          elseif ($code -ne 0) { "hook install exited $code"; exit 1 }
+          else {
+            # Whether Windows read it, with no /force: the sign-out scripts it
+            # took in for this account, for the log only.
+            $read = Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Logoff' -Recurse -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.GetValue('Script') } | Where-Object { $_ }
+            "the sign-out scripts Windows took in for this account: $(if ($read) { $read -join ', ' } else { '(none listed)' })"
+          }
+          $h = ./dist/wsl-spawner.exe hook status --json | ConvertFrom-Json
+          $h | ConvertTo-Json
+          if (-not $h.installed -or -not $h.last) { 'the hook is not installed last'; exit 1 }
+          $ini = [IO.File]::ReadAllText((Join-Path $env:SystemRoot 'System32\GroupPolicy\User\Scripts\scripts.ini'))
+          if ($ini -notmatch 'wsl-spawnerw\.exe') { $ini; 'scripts.ini does not name the program'; exit 1 }
+          # What Windows starts at sign-out, started as it starts it: no
+          # console, and waited for.
+          # Waited for as Windows waits: that one process, not what it
+          # started, which WSL keeps running.
+          $p = Start-Process -FilePath (Resolve-Path dist/wsl-spawnerw.exe).Path -ArgumentList 'logoff' -PassThru
+          # Its handle, taken while it runs: without one, the object
+          # Start-Process gives has no exit code once the process has ended.
+          $null = $p.Handle
+          $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { "the hook's program exited $($p.ExitCode)"; ./dist/wsl-spawner.exe history; exit 1 }
+          $running = ((wsl.exe --list --running --quiet) -join "`n") -replace "`0", ''
+          if ($running -match "(?m)^$env:LAB\s*$") { 'the lab still runs after the sign-out hook'; exit 1 }
+          $last = @((./dist/wsl-spawner.exe history --json | ConvertFrom-Json).entries)[-1]
+          $last | ConvertTo-Json -Depth 6
+          if ($last.what -ne 'stop' -or $last.by -ne 'signout' -or -not $last.shutdown) { 'the history has no stop by sign-out that stopped WSL'; exit 1 }
+          if ($last.distributions[0].result -ne 'clean') { "the sign-out stop ended $($last.distributions[0].result)"; exit 1 }
+          ./dist/wsl-spawner.exe hook remove --yes
+          $code = $LASTEXITCODE
+          # 3, as for the install: out of the files, Windows' reading aside.
+          if ($code -eq 3) { 'hook remove: out of the policy, but Windows has not read that yet (its words are above)' }
+          elseif ($code -ne 0) { "hook remove exited $code"; exit 1 }
+          if ((./dist/wsl-spawner.exe hook status --json | ConvertFrom-Json).installed) { 'the hook is still installed'; exit 1 }
+          $ini = [IO.File]::ReadAllText((Join-Path $env:SystemRoot 'System32\GroupPolicy\User\Scripts\scripts.ini'))
+          if ($ini -match 'wsl-spawnerw\.exe') { $ini; 'scripts.ini still names the program'; exit 1 }
+          exit 0
+      - name: the start at sign-in, added, run as Windows runs it, and removed
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          ./dist/wsl-spawner.exe set $env:LAB --logon --yes
+          if ($LASTEXITCODE -ne 0) { "set --logon exited $LASTEXITCODE"; exit 1 }
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).'wsl-spawner'
+          "the sign-in program: $run"
+          if ($run -notmatch 'wsl-spawnerw\.exe"? logon$') { 'no sign-in program'; exit 1 }
+          # The change may have started the lab to look inside: stopped, the
+          # sign-in program must start it, and wsl-spawner keep it running.
+          wsl.exe --terminate $env:LAB
+          # That one process: the lab's keep-running service holds a Windows
+          # program that -Wait would wait for too.
+          $p = Start-Process -FilePath (Resolve-Path dist/wsl-spawnerw.exe).Path -ArgumentList 'logon' -PassThru
+          # Its handle while it runs, for its exit code (as the hook's above).
+          $null = $p.Handle
+          $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { "the sign-in program exited $($p.ExitCode)"; ./dist/wsl-spawner.exe history; exit 1 }
+          Start-Sleep -Seconds 45
+          $running = ((wsl.exe --list --running --quiet) -join "`n") -replace "`0", ''
+          if ($running -notmatch "(?m)^$env:LAB\s*$") { $running; 'the lab does not run after the sign-in program'; exit 1 }
+          # The sign-out hook's stop, the step before, gave the service its
+          # 40 seconds too.
+          $log = wsl.exe -d $env:LAB -u root -- cat /var/lib/lab/log
+          "the service's log: $($log -join ', ')"
+          if (@($log | Where-Object { $_ -eq 'stopped' }).Count -ne 2) { "the sign-out hook's stop did not let the service's stop run to its end"; exit 1 }
+          ./dist/wsl-spawner.exe set $env:LAB --logon=false --yes
+          if ($LASTEXITCODE -ne 0) { "set --logon=false exited $LASTEXITCODE"; exit 1 }
+          if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).'wsl-spawner') { 'the sign-in program is still there'; exit 1 }
+          exit 0
+      - name: wsl-spawner taken out of the lab, the person's own files left
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          ./dist/wsl-spawner.exe set $env:LAB --managed=false --yes
+          if ($LASTEXITCODE -ne 0) { "set --managed=false exited $LASTEXITCODE"; exit 1 }
+          wsl.exe -d $env:LAB -u root -- sh -c 'test ! -e /etc/systemd/system/wsl-spawner.service && test ! -e /etc/systemd/system/wsl-spawner-keepalive.service && test ! -e /var/lib/wsl-spawner && test -s /etc/wsl-spawner/stop-units && test -x /etc/wsl-spawner/pre-stop.d/10-mark'
+          if ($LASTEXITCODE -ne 0) { 'taking it out left its files, or took the hook and stop-units with it'; exit 1 }
+          ./dist/wsl-spawner.exe history
+          exit 0
+      - name: remove the lab
+        if: always()
+        shell: pwsh
+        run: wsl.exe --unregister $env:LAB

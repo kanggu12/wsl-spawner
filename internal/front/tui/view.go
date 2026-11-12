@@ -3003,9 +3003,17 @@ const hyphen = "‑"
 
 // wrapTo wraps s to w cells, each line in st, words whole.
 func (m model) wrapTo(s string, w int, st lipgloss.Style) []string {
-	// Words wrap at spaces; one longer than the line, as a path, breaks
-	// where the line ends rather than being cut short.
-	wrapped := strings.Split(ansi.Wrap(strings.ReplaceAll(s, "-", hyphen), max(10, w), ""), "\n")
+	// Words wrap at spaces, each whole where a line holds it. One longer
+	// than the line, as a long path, breaks after a separator, a name in it
+	// kept whole, or where the line ends when it has none: never cut short.
+	var wrapped []string
+	for _, l := range strings.Split(ansi.Wordwrap(strings.ReplaceAll(s, "-", hyphen), max(10, w), ""), "\n") {
+		if ansi.StringWidth(l) > max(10, w) {
+			wrapped = append(wrapped, strings.Split(ansi.Wrap(l, max(10, w), `\/`), "\n")...)
+			continue
+		}
+		wrapped = append(wrapped, l)
+	}
 	for i, l := range wrapped {
 		wrapped[i] = st.Render(strings.ReplaceAll(l, hyphen, "-"))
 	}

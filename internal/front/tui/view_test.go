@@ -464,6 +464,22 @@ func TestACheckFindingsLongPathIsBrokenNotCut(t *testing.T) {
 	if !strings.Contains(joined, strings.ReplaceAll(path, " ", "")) {
 		t.Errorf("the path is not whole in\n%s", f)
 	}
+	// It breaks after a separator, never inside a name: each line of the
+	// left column the path goes on from ends with one.
+	var left []string
+	for _, l := range strings.Split(f, "\n") {
+		left = append(left, strings.TrimRight(strings.SplitN(l, "│", 2)[0], " "))
+	}
+	for i, l := range left {
+		if strings.Contains(l, `C:\`) {
+			for k := i; k < len(left)-1 && !strings.HasSuffix(left[k], ".exe"); k++ {
+				if !strings.HasSuffix(left[k], `\`) {
+					t.Errorf("the path breaks inside a name: %q", left[k])
+				}
+			}
+			break
+		}
+	}
 }
 
 func TestCtrlCDuringAStopClosesTheScreenAsTheStopEnds(t *testing.T) {

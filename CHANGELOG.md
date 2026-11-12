@@ -6,6 +6,15 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
+A path that wraps breaks after a separator.
+
+### Fixed
+
+- A path longer than a column of the check, or of any text that wraps on the screen, broke wherever the line ended,
+  inside a name (`…\wsl-spawner\w`, then `sl-spawnerw.exe`). It breaks after a `\` or `/`, its names whole.
+
 ## [0.2.1] - 2026-11-13
 
 A review of the screen and the commands: what the screen cut or left out, a stop the screen's Ctrl+C could end part
@@ -255,7 +264,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.0
 [0.1.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.2

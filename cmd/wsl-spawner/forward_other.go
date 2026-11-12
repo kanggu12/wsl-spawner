@@ -202,7 +202,7 @@ func appendWSLENV(cur, entry string) string {
 }
 
 // valueFlags are the flags that take a value as the next word.
-var valueFlags = []string{"--lang", "--theme", "--keys", "--snapshot"}
+var valueFlags = []string{"--lang", "--theme", "--keys", "--snapshot", "--at"}
 
 // screenAsked reports whether a command line opens the screen: no command,
 // or tui, with only flags around it.

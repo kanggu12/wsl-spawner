@@ -129,6 +129,9 @@ func (m model) header() string {
 	if n := m.kept(); n > 0 {
 		right = append(right, ui.Fg(t.Muted).Render(i18n.TN("header.kept", n, n)))
 	}
+	if n := m.atLogon(); n > 0 {
+		right = append(right, ui.Fg(t.Muted).Render(i18n.TN("header.logon", n, n)))
+	}
 	// fit lays out a left side and right pieces, if they fit with a gap.
 	fit := func(l string, r []string) (string, bool) {
 		rs := strings.Join(r, ui.Fg(t.Faint).Render("  "+ui.Sep()+"  "))
@@ -151,6 +154,17 @@ func (m model) header() string {
 		}
 	}
 	return " " + left + wslv
+}
+
+// atLogon counts the distributions started at sign-in.
+func (m model) atLogon() int {
+	n := 0
+	for _, d := range m.st.List {
+		if d.AtLogon {
+			n++
+		}
+	}
+	return n
 }
 
 // kept counts the distributions kept running.
@@ -184,6 +198,13 @@ func (m model) mainView() string {
 		lines := append(m.logoBlock(), "", ui.Fg(t.Muted).Render(i18n.T("empty")))
 		return m.page(m.centered(h, lines...), "", keys)
 	}
+	// Wide: two panes, the distributions and their newest stops and starts
+	// on the left, the selected one on the right, a rule between, as
+	// wsl-shrinker lays out its disks: the screen is full, and the eye goes
+	// from the list to the one chosen.
+	if m.width >= wideMin {
+		return m.page(m.panes(h), m.statusLine(), keys)
+	}
 	// The table takes what it needs, up to half the rows when the
 	// distributions are many: the selected one's row stays among those
 	// shown, and its details in sight under it.
@@ -209,6 +230,335 @@ func (m model) mainView() string {
 		}
 	}
 	return m.page(body, m.statusLine(), keys)
+}
+
+// wideMin is the width from which the main screen is two panes: under it
+// the selected distribution goes under the table, as on a narrow terminal.
+const wideMin = 112
+
+// leftMin and leftShare bound the left pane: the table at its own width, at
+// least leftMin cells, at most leftShare of the screen, so the right pane
+// keeps room for a step's bar.
+const (
+	leftMin   = 52
+	leftShare = 0.58
+)
+
+// panes is the main screen on a wide terminal in h rows: on the left the
+// table and, under it, the newest stops and starts; a rule; on the right
+// the selected distribution, with its last stop step by step.
+func (m model) panes(h int) []string {
+	t := m.th
+	// The table at its own width, within its bounds: one cell of margin on
+	// the left is the page's, three cells for the rule and its spaces.
+	// The table whole, the last stops with their times, where the left
+	// pane has room for it; else each last stop as its word alone, its
+	// time in the pane beside.
+	wide := m
+	room := int(float64(m.width) * leftShare)
+	// First the tools' names in short, then the last stops' times, until
+	// the table fits the room.
+	if wide.tableWidth() > room {
+		wide.shortOwner = true
+	}
+	if wide.tableWidth() > room {
+		wide.wordOnly = true
+	}
+	leftW := min(max(wide.tableWidth(), leftMin), room)
+	rightW := m.width - leftW - 3 - 2
+	left := wide.table(leftW, max(4, h/2))
+	// The recent runs fill the rest of the left pane, a blank row above:
+	// three cells in, under the table's names, each run whole, on more
+	// lines where it is long.
+	if rest := h - len(left) - 1; rest >= 2 {
+		left = append(left, "")
+		for _, l := range m.recentWrapped(leftW-3, rest) {
+			left = append(left, "   "+l)
+		}
+	}
+	right := m.pane(rightW, h)
+	// The rule runs the body's height, quieter than any text.
+	rule := ui.Fg(t.Rule).Render("│")
+	out := make([]string, h)
+	for i := range out {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		out[i] = ui.Fit(l, leftW) + " " + rule + " " + r
+	}
+	return out
+}
+
+// recentWrapped is the newest stops and starts in w cells and h rows,
+// under a title, newest first, each whole: one too long goes on under its
+// first line. A run that would not fit whole is left out, with those after.
+func (m model) recentWrapped(w, h int) []string {
+	t := m.th
+	if h < 2 {
+		return nil
+	}
+	lines := []string{lipgloss.NewStyle().Bold(true).Foreground(t.Muted).Render(i18n.T("recent.title"))}
+	if len(m.hist) == 0 {
+		return append(lines, ui.Fit(ui.Fg(t.Muted).Render(i18n.T("history.none")), w))
+	}
+	for i := len(m.hist) - 1; i >= 0; i-- {
+		e := m.entryLines(m.hist[i], "01-02 15:04", w)
+		if len(lines)+len(e) > h {
+			break
+		}
+		lines = append(lines, e...)
+	}
+	return lines
+}
+
+// tableWidth is how wide the table is with every column whole: the left
+// pane's width when the screen leaves it.
+func (m model) tableWidth() int {
+	w := 0
+	for _, l := range m.table(1<<12, len(m.st.List)+1) {
+		// The selected row is lit across the width it is given: the others
+		// say how wide the cells are.
+		w = max(w, lipgloss.Width(strings.TrimRight(ansi.Strip(l), " ")))
+	}
+	return w + 1
+}
+
+// pane is the selected distribution in w cells and h rows, beside the
+// table: what it is, a line that says what matters most, then its last
+// stop step by step, what its next stop does, its containers and its
+// choices. What does not fit goes from the end.
+func (m model) pane(w, h int) []string {
+	t := m.th
+	d, ok := m.selected()
+	if !ok || h < 1 {
+		return nil
+	}
+	bold := lipgloss.NewStyle().Bold(true).Foreground(t.Ink)
+	lines := []string{ui.Fit(bold.Render(d.Name)+ui.Fg(t.Muted).Render(m.facts(d)), w)}
+	text, st := m.verdict(d)
+	lines = append(lines, m.wrapTo(text, w, st)...)
+	if !ours(d) {
+		// Not wsl-spawner's: the verdict says whose it is, and that is all.
+		return cut(lines, h)
+	}
+	p := d.Probe
+	switch {
+	case p == nil && d.Running && d.ProbeError != "":
+		lines = append(lines, ui.Fg(t.Muted).Render(ui.Fit(d.ProbeError, w)))
+	case p != nil && !p.Complete && d.ProbeError != "":
+		lines = append(lines, ui.Fg(t.Cat[ui.CatWarn]).Render(ui.Fit(d.ProbeError, w)))
+	}
+	var secs []section
+	if _, _, inHistory := m.lastStopIn(d.Name); p != nil || inHistory {
+		secs = append(secs, section{title: i18n.T("detail.laststop"), rows: m.lastStopRows(d, w)})
+	}
+	if p != nil {
+		rows, fill := m.nextStopLines(*p, w)
+		secs = append(secs, section{title: i18n.T("detail.nextstop"), rows: rows, fill: fill, whole: true})
+		if len(p.Containers) > 0 {
+			secs = append(secs, section{title: i18n.T("detail.containers"), rows: m.containerRows(*p, w), list: true})
+		}
+	}
+	if _, known := m.stateOf(d); known {
+		secs = append(secs, section{title: i18n.T("detail.choices"), rows: m.choiceChips(d, w), whole: true})
+	}
+	// Its stops, where the screen is tall enough for them after the rest:
+	// what fills a tall terminal is its own record.
+	if rows := m.stopsRows(d.Name, w, 8); len(rows) > 1 {
+		// The bars' scale in the title: the time a stop has.
+		secs = append(secs, section{title: i18n.T("detail.stops") + " " + ui.Sep() + " " + i18n.T("detail.stops.of", m.st.StopLimit), rows: rows, list: true})
+	}
+	if len(secs) == 0 || h-len(lines) < 3 {
+		return cut(lines, h)
+	}
+	lines = append(lines, "")
+	return cut(append(lines, m.stack(secs, w, h-len(lines))...), h)
+}
+
+// lastStopRows are how a distribution's last start ended, then, where
+// wsl-spawner's stop ended it, that stop's steps each with a bar of its
+// time, then what came back at its next start.
+func (m model) lastStopRows(d api.Distro, w int) []string {
+	rows := m.lastStopLines(d, w)
+	how := ""
+	if d.Probe != nil {
+		how = d.Probe.LastEnd.How
+	}
+	// The steps belong to the stop the line above names: one that ended
+	// the last start (clean, out of time, a step failed), or, said from the
+	// history, the newest. A start cut short has no stop to show.
+	_, r, ok := m.lastStopIn(d.Name)
+	if !ok || (!fromHistory(how) && endCat(how) == ui.CatCut) {
+		return rows
+	}
+	steps := m.stepRows(r, w)
+	if len(steps) == 0 {
+		return rows
+	}
+	// After the line that says how it ended, before what came back.
+	n := len(m.endLines(d, w))
+	out := append(append(append([]string{}, rows[:n]...), steps...), rows[n:]...)
+	return out
+}
+
+// endLines are the lines lastStopLines gives to how the last start ended,
+// without what came back after it.
+func (m model) endLines(d api.Distro, w int) []string {
+	if d.Probe == nil || len(d.Probe.Resumed) == 0 {
+		return m.lastStopLines(d, w)
+	}
+	all := m.lastStopLines(d, w)
+	back := wrapPieces("  ↻ ", "    ", w, m.backPieces(*d.Probe)...)
+	return all[:max(0, len(all)-len(back))]
+}
+
+// stepRows are the steps of a stop, as the history keeps them, in w cells:
+// a mark for how each ended, its name, a bar of its time against the
+// longest step's, and its seconds. A pane too narrow for a bar has none.
+func (m model) stepRows(r history.Distro, w int) []string {
+	t := m.th
+	if len(r.Steps) == 0 {
+		return nil
+	}
+	names := make([]string, len(r.Steps))
+	secs := make([]string, len(r.Steps))
+	nameW, secW, longest := 0, 0, 0.0
+	for i, s := range r.Steps {
+		names[i] = historyStepWords(s)
+		secs[i] = elapsed(time.Duration(s.Took * float64(time.Second)))
+		nameW = max(nameW, lipgloss.Width(names[i]))
+		secW = max(secW, lipgloss.Width(secs[i]))
+		longest = max(longest, s.Took)
+	}
+	// Four cells in, under the result's words; the mark and a space; the
+	// name; two spaces; the bar; two spaces; the seconds, right-aligned.
+	// The names first, whole where they fit: the bar takes what is left.
+	nameW = min(nameW, max(12, w-6-2-2-secW))
+	barW := min(24, w-6-nameW-2-2-secW)
+	var out []string
+	for i, s := range r.Steps {
+		color, mark := t.Cat[ui.CatClean], "✓"
+		switch {
+		case s.Code == 124:
+			// Ran out of its time.
+			color, mark = t.Cat[ui.CatWarn], "!"
+		case s.Code != 0:
+			color, mark = t.Cat[ui.CatCut], "✗"
+		}
+		row := "    " + ui.Fg(color).Render(mark) + " " + ui.Fit(ui.Fg(t.Ink).Render(names[i]), nameW)
+		if barW >= 6 {
+			// A step that took no measurable time keeps its track.
+			row += "  " + t.Bar(barW, int64(longest*1000), ui.Part{Value: int64(s.Took * 1000), Color: color})
+		}
+		row += "  " + ui.Fg(t.Muted).Render(ui.FitRight(secs[i], secW))
+		out = append(out, row)
+	}
+	return out
+}
+
+// historyStepWords names a stop's step from the history as the run screen
+// named it while it ran: a hook by its file, the containers and units by
+// their count; a failed one with its exit code.
+func historyStepWords(s history.Step) string {
+	words := ""
+	switch {
+	case s.Step == "units" && s.Count > 0:
+		words = i18n.TN("step.units", s.Count, s.Count)
+	case (s.Step == "docker" || s.Step == "podman") && s.Count > 0:
+		words = i18n.TN("step.containers", s.Count, s.Step, s.Count)
+	default:
+		// The hook by its file, the others by name, the exit code with them.
+		return stepName(s)
+	}
+	if s.Code != 124 && s.Code != 0 {
+		words += i18n.T("stepname.exit", s.Code)
+	}
+	return words
+}
+
+// stopsRows are a distribution's newest stops in the history, newest
+// first, at most n, each in w cells: when, a bar of how long it took
+// against the stop limit, the seconds, and how it ended in its color, so
+// stops that grow toward the limit show at a glance.
+func (m model) stopsRows(name string, w, n int) []string {
+	t := m.th
+	limit := m.st.StopLimit
+	if limit <= 0 {
+		return nil
+	}
+	// row is one stop of it: when, how long, how it ended.
+	type row struct {
+		at   string
+		took int64
+		cat  ui.Category
+		word string
+	}
+	var rows []row
+	for i := len(m.hist) - 1; i >= 0 && len(rows) < n; i-- {
+		e := m.hist[i]
+		if e.What != "stop" {
+			continue
+		}
+		for _, r := range e.Distros {
+			if r.Name == name {
+				rows = append(rows, row{e.At.Local().Format("01-02 15:04"), int64(math.Round(r.Took)), endCat(r.Result), i18n.T("end." + r.Result)})
+			}
+		}
+	}
+	// One width for every bar, from the widest word, so the bars share
+	// their scale: stop_limit, the time each stop had.
+	words := 0
+	for _, r := range rows {
+		words = max(words, lipgloss.Width(r.word))
+	}
+	barW := min(24, w-2-11-2-2-6-2-words)
+	var out []string
+	for _, r := range rows {
+		line := "  " + ui.Fg(t.Muted).Render(r.at) + "  "
+		if barW >= 8 {
+			line += t.Bar(barW, int64(limit), ui.Part{Value: r.took, Color: t.Cat[r.cat]}) + "  "
+		}
+		out = append(out, line+ui.Fg(t.Muted).Render(ui.FitRight(i18n.T("secs", int(r.took)), 6))+"  "+ui.Fg(t.Cat[r.cat]).Render(r.word))
+	}
+	return out
+}
+
+// choiceChips are a distribution's three choices as chips: one on is lit,
+// with its check; one off is quiet, with an empty circle. One line where
+// they fit, else one under another.
+func (m model) choiceChips(d api.Distro, w int) []string {
+	t := m.th
+	s, _ := m.stateOf(d)
+	on := lipgloss.NewStyle().Background(t.Key)
+	chip := func(set bool, key string) string {
+		if set {
+			return on.Foreground(t.Mark).Render(" ✓") + on.Foreground(t.Ink).Render(" "+i18n.T(key)+" ")
+		}
+		return ui.Fg(t.Faint).Render(" ○ ") + ui.Fg(t.Muted).Render(i18n.T(key)+" ")
+	}
+	chips := []string{chip(s.Managed, "choicebox.setup"), chip(s.Keep, "choicebox.keep"), chip(s.Logon, "choicebox.logon")}
+	if line := "  " + strings.Join(chips, " "); lipgloss.Width(line) <= w {
+		return []string{line}
+	}
+	// Short of room for the chips: the same as a checklist on one line, two
+	// cells between.
+	mark := func(on bool, key string) string {
+		if on {
+			return ui.Fg(t.Mark).Render("✓") + " " + ui.Fg(t.Ink).Render(i18n.T(key))
+		}
+		return ui.Fg(t.Faint).Render("○") + " " + ui.Fg(t.Muted).Render(i18n.T(key))
+	}
+	if line := "  " + mark(s.Managed, "choicebox.setup") + "  " + mark(s.Keep, "choicebox.keep") + "  " + mark(s.Logon, "choicebox.logon"); lipgloss.Width(line) <= w {
+		return []string{line}
+	}
+	for i := range chips {
+		chips[i] = "  " + chips[i]
+	}
+	return chips
 }
 
 // centered places lines in the middle of h rows.
@@ -410,7 +760,12 @@ func (m model) rowCells(d api.Distro) []string {
 	if d.Probe != nil {
 		containers = m.containerWords(*d.Probe)
 	}
-	return append(cells, containers, m.endWords(d, false))
+	end := m.endWords(d, false)
+	if m.wordOnly {
+		// The word in its color; the time is in the pane beside.
+		end = render(m.endPieces(d, false)[:1])
+	}
+	return append(cells, containers, end)
 }
 
 // modeCell says how far wsl-spawner goes with a distribution: three squares
@@ -423,6 +778,10 @@ func (m model) modeCell(d api.Distro) string {
 	case "skipped":
 		return ui.Fg(t.Cat[ui.CatAside]).Render(i18n.T("kind.skipped"))
 	case "owned":
+		if m.shortOwner {
+			// The tool's name alone, where the table shares the screen.
+			return ui.Fg(t.Cat[ui.CatAside]).Render(i18n.T("kind.owned.short", d.Owner))
+		}
 		return ui.Fg(t.Cat[ui.CatAside]).Render(i18n.T("kind.owned", d.Owner))
 	case "wsl1":
 		return ui.Fg(t.Cat[ui.CatAside]).Render(i18n.T("kind.wsl1"))
@@ -474,7 +833,23 @@ func (m model) containerWords(p api.Probe) string {
 			running++
 		}
 	}
-	return fmt.Sprintf("%d/%d", running, len(p.Containers))
+	return m.containerMeter(running, len(p.Containers)) + " " + fmt.Sprintf("%d/%d", running, len(p.Containers))
+}
+
+// containerMeter is a row's containers as squares: those running in their
+// color, the rest as track, five squares at most for any count, so the
+// column reads as a meter down the table.
+func (m model) containerMeter(running, all int) string {
+	t := m.th
+	if all == 0 {
+		return ""
+	}
+	n := min(all, 5)
+	lit := int(math.Round(float64(running) / float64(all) * float64(n)))
+	if running > 0 && lit == 0 {
+		lit = 1
+	}
+	return ui.Fg(t.Cat[ui.CatRunning]).Render(strings.Repeat(ui.Block, lit)) + ui.Fg(t.Track).Render(strings.Repeat(ui.Block, n-lit))
 }
 
 // lastStopIn is a distribution's newest stop in the history, and how it went
@@ -525,8 +900,10 @@ func (m model) endPieces(d api.Distro, long bool) []piece {
 	when := func(at time.Time, took float64, by string) []piece {
 		out := []piece{{" " + at.Local().Format("01-02 15:04"), ui.Fg(t.Muted), true}}
 		if long {
+			// Who asked stays whole: on the next line where the line is
+			// full, not a word of it alone there.
 			out = append(out, piece{" " + ui.Sep() + " " + i18n.T("secs", int(math.Round(took))), ui.Fg(t.Muted), true},
-				piece{" " + ui.Sep() + " " + byWords(by), ui.Fg(t.Muted), false})
+				piece{" " + ui.Sep() + " " + m.byFor(by), ui.Fg(t.Muted), true})
 		}
 		return out
 	}
@@ -654,6 +1031,14 @@ func wrapPieces(lead, rest string, w int, ps ...piece) []string {
 func fromHistory(how string) bool { return how == "" || how == "unknown" || how == "first" }
 
 // byWords says who asked for a stop or start.
+// byFor says who asked, in the words the line has room for.
+func (m model) byFor(by string) string {
+	if m.shortBy {
+		return byShort(by)
+	}
+	return byWords(by)
+}
+
 func byWords(by string) string {
 	switch by {
 	case "signout":
@@ -1036,7 +1421,15 @@ func (m model) lastStopLines(d api.Distro, cw int) []string {
 				"failed": ui.Fg(t.Cat[ui.CatWarn]).Render("!"), "error": ui.Fg(t.Cat[ui.CatCut]).Render("✗")}[r.Result]
 		}
 	}
-	out := wrapPieces("  "+mark+" ", "    ", cw, m.endPieces(d, true)...)
+	ps := m.endPieces(d, true)
+	if lipgloss.Width(render(ps)) > cw-4 {
+		// The line in fewer words where it does not fit whole: who asked
+		// as the table of runs says it.
+		short := m
+		short.shortBy = true
+		ps = short.endPieces(d, true)
+	}
+	out := wrapPieces("  "+mark+" ", "    ", cw, ps...)
 	if p := d.Probe; p != nil && len(p.Resumed) > 0 {
 		out = append(out, wrapPieces("  "+ui.Fg(t.Cat[ui.CatStarting]).Render("↻")+" ", "    ", cw, m.backPieces(*p)...)...)
 	}
@@ -1310,8 +1703,9 @@ func (m model) entryParts(e history.Entry, layout string) (string, []piece) {
 	var parts []piece
 	for i, d := range e.Distros {
 		word, cat := i18n.T("end."+d.Result), endCat(d.Result)
-		// A stop out of time, or with a step failed: which step.
-		if s, ok := d.Late(); ok {
+		// A stop out of time, or with a step failed: which step, but in a
+		// list beside the run's own pane, which names it.
+		if s, ok := d.Late(); ok && !m.noSteps {
 			word += ": " + stepName(s)
 		}
 		if e.What == "start" {
@@ -1330,7 +1724,12 @@ func (m model) entryParts(e history.Entry, layout string) (string, []piece) {
 		if i < len(e.Distros)-1 || e.Err != "" {
 			end = ","
 		}
-		parts = append(parts, piece{sep + d.Name + " " + ui.Fg(t.Cat[cat]).Render(word) + end, lipgloss.NewStyle(), true})
+		// The name whole; the result in its color, a long one broken at its
+		// spaces where the line ends; the comma after it, with it.
+		parts = append(parts, piece{sep + d.Name, lipgloss.NewStyle(), true}, piece{" " + word, ui.Fg(t.Cat[cat]), lipgloss.Width(word) <= 16})
+		if end != "" {
+			parts = append(parts, piece{end, lipgloss.NewStyle(), true})
+		}
 	}
 	if e.Err != "" {
 		parts = append(parts, piece{" " + e.Err, ui.Fg(t.Cat[ui.CatCut]), false})
@@ -1742,7 +2141,21 @@ func (m model) runView() string {
 	w := m.width - 4
 	// The title gives way to the clock, which stays at the right edge.
 	shown := bold.Render(ui.Fit(title, max(1, w-lipgloss.Width(clock)-2)))
-	head := []string{"  " + strings.TrimRight(shown, " ") + strings.Repeat(" ", max(2, w-lipgloss.Width(strings.TrimRight(shown, " "))-lipgloss.Width(clock))) + clock, ""}
+	head := []string{"  " + strings.TrimRight(shown, " ") + strings.Repeat(" ", max(2, w-lipgloss.Width(strings.TrimRight(shown, " "))-lipgloss.Width(clock))) + clock,
+		// A rule under the title, quieter than any text.
+		"  " + ui.Fg(t.Rule).Render(strings.Repeat("─", w)), ""}
+	// cols is how many distributions stand side by side: two where there
+	// are two or more and room for two blocks with their bars.
+	cols := 1
+	if len(r.act.names) >= 2 && w >= 2*minRunCol+3 {
+		cols = 2
+	}
+	bw := w
+	if cols == 2 {
+		bw = (w - 3) / 2
+	}
+	// inner is a block's width after its edge and a space.
+	inner := bw - 2
 	// Each distribution's block: its name with how it went, its steps, its
 	// bar and what comes back. Folded once, its steps go; folded twice, all
 	// but its first line.
@@ -1752,24 +2165,38 @@ func (m model) runView() string {
 	}
 	var blocks []block
 	for _, name := range r.act.names {
-		top := bold.Render(name)
+		// The block's edge, in the color of how it goes: a card down the
+		// screen, which its lines hang from.
+		edge := ui.Fg(t.Cat[m.runColor(name, r)]).Render("▌") + " "
+		top := bold.Render(ui.Fit(name, inner))
 		res, ok := r.results[name]
 		if ok {
 			words := m.resultWords(name, res, r)
-			top += strings.Repeat(" ", max(2, w-lipgloss.Width(top)-lipgloss.Width(words))) + words
+			top = bold.Render(name) + strings.Repeat(" ", max(2, inner-lipgloss.Width(name)-lipgloss.Width(words))) + words
 		}
-		b := block{top: []string{"  " + top}}
+		b := block{top: []string{edge + top}}
 		if r.act.kind == "stop" {
-			sw := stepWidth(r)
+			// The steps' words, their bars and their times: the words up to
+			// half the block, the bar what is left, the time eight cells.
+			sw := min(stepWidth(r), max(8, inner/2))
+			barW := min(24, inner-2-2-sw-2-2-8)
+			scale := m.stepScale(r.steps[name], m.now)
 			for _, s := range r.steps[name] {
-				b.steps = append(b.steps, m.stepLine(s, m.now, sw))
+				b.steps = append(b.steps, edge+"  "+m.stepLine(s, m.now, sw, barW, scale))
 			}
-			b.rest = append(b.rest, m.runBar(name, r, w))
+			b.rest = append(b.rest, edge+"  "+m.runBar(name, r, inner-2))
+			// While a step runs, what it does, under the bar: why a stop of
+			// wsl-spawner's takes its time where WSL's takes seconds.
+			if about := stepAbout(r.steps[name]); !ok && about != "" {
+				for _, l := range wrapPieces("", "", inner-2, piece{text: about, style: ui.Fg(t.Muted)}) {
+					b.rest = append(b.rest, edge+"  "+l)
+				}
+			}
 			if next := m.nextStart(name); ok && next != "" {
-				b.rest = append(b.rest, "    "+ui.Fg(t.Muted).Render(next))
+				b.rest = append(b.rest, edge+"  "+ui.Fg(t.Muted).Render(ui.Fit(next, inner-2)))
 			}
 		} else if !ok {
-			b.steps = append(b.steps, "    "+ui.Fg(t.Cat[ui.CatStarting]).Render(spinner[m.spin%len(spinner)]+" "+i18n.T("run.waiting")))
+			b.steps = append(b.steps, edge+"  "+ui.Fg(t.Cat[ui.CatStarting]).Render(spinner[m.spin%len(spinner)]+" "+i18n.T("run.waiting")))
 		}
 		blocks = append(blocks, b)
 	}
@@ -1788,22 +2215,50 @@ func (m model) runView() string {
 		default:
 			mark, words = ui.Fg(t.Faint).Render("·"), i18n.T("run.wsl.wait")
 		}
-		tail = append(tail, "  "+bold.Render("WSL"), "    "+mark+" "+words, "")
+		// Its edge as a block's: blue while it goes, then how it went.
+		edgeCat := map[string]ui.Category{"run": ui.CatStarting, "done": ui.CatClean, "failed": ui.CatCut}[r.wsl]
+		edge := ui.Fg(t.Faint).Render("▌") + " "
+		if r.wsl != "" {
+			edge = ui.Fg(t.Cat[edgeCat]).Render("▌") + " "
+		}
+		tail = append(tail, "  "+edge+bold.Render("WSL"), "  "+edge+"  "+mark+" "+words, "")
 	}
 	if r.done && r.err != nil {
 		tail = append(tail, "  "+ui.Fg(t.Cat[ui.CatCut]).Render("✗ "+errWords(r.err)))
 	}
 	// layout is the title, the blocks as folded, a blank after each, and
 	// the tail, without the blank rows at its end.
+	lines := func(b block) []string {
+		out := append([]string{}, b.top...)
+		if b.fold < 1 {
+			out = append(out, b.steps...)
+		}
+		if b.fold < 2 {
+			out = append(out, b.rest...)
+		}
+		return out
+	}
 	layout := func() []string {
 		body := append([]string{}, head...)
-		for _, b := range blocks {
-			body = append(body, b.top...)
-			if b.fold < 1 {
-				body = append(body, b.steps...)
-			}
-			if b.fold < 2 {
-				body = append(body, b.rest...)
+		for i := 0; i < len(blocks); i += cols {
+			left := lines(blocks[i])
+			if cols == 2 && i+1 < len(blocks) {
+				// Two blocks side by side, three cells between.
+				right := lines(blocks[i+1])
+				for j := 0; j < max(len(left), len(right)); j++ {
+					l, rr := "", ""
+					if j < len(left) {
+						l = left[j]
+					}
+					if j < len(right) {
+						rr = right[j]
+					}
+					body = append(body, "  "+ui.Fit(l, bw)+"   "+rr)
+				}
+			} else {
+				for _, l := range left {
+					body = append(body, "  "+l)
+				}
 			}
 			body = append(body, "")
 		}
@@ -1836,6 +2291,101 @@ func (m model) runView() string {
 	}
 	return m.page(body, status, keys)
 }
+
+// historyPanes is the history on a wide terminal: on the left the stops
+// and starts, newest first, the one chosen lit, as many as fit around it;
+// a rule; on the right what the chosen one did, each distribution with how
+// it went and the steps of its stop, each with a bar of its time.
+func (m model) historyPanes() string {
+	t := m.th
+	h := m.bodyHeight()
+	n := len(m.hist)
+	// scroll is the chosen run, the newest first: the keys that scroll the
+	// list on a narrow screen choose a run here.
+	sel := min(m.scroll, n-1)
+	leftW := max(leftMin, int(float64(m.width)*leftShare))
+	rightW := m.width - leftW - 3 - 2
+	// The list says how each went in its word: which step, in the pane.
+	list := m
+	list.noSteps = true
+	first := 0
+	if n > h {
+		first = min(max(0, sel-h/2), n-h)
+	}
+	var left []string
+	for i := first; i < min(n, first+h); i++ {
+		e := m.hist[n-1-i]
+		row := " " + ui.Fit(list.entryLine(e, "01-02 15:04"), leftW-2)
+		if i == sel {
+			// The chosen run: the screen's selection, as the table's row.
+			row = ui.Highlight(ui.Fg(t.Mark).Render("▌")+ui.Fit(list.entryLine(e, "01-02 15:04"), leftW-2), t.Selected, leftW)
+		}
+		left = append(left, row)
+	}
+	right := m.entryPane(m.hist[n-1-sel], rightW, h)
+	rule := ui.Fg(t.Rule).Render("│")
+	body := make([]string, h)
+	for i := range body {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		body[i] = ui.Fit(l, leftW) + " " + rule + " " + r
+	}
+	status := " " + ui.Fg(t.Muted).Render(i18n.TN("history.count", n, n))
+	keys := m.keyBar([][2]string{{"↑↓", i18n.T("key.select")}, {"esc", i18n.T("key.back")}})
+	return m.page(body, status, keys)
+}
+
+// entryPane is a run of the history in w cells and h rows: what it was,
+// when, who asked and how long it took; then each distribution with how it
+// went, the steps of its stop with their bars, and what went wrong.
+func (m model) entryPane(e history.Entry, w, h int) []string {
+	t := m.th
+	bold := lipgloss.NewStyle().Bold(true).Foreground(t.Ink)
+	what := i18n.T("history." + e.What)
+	if e.Shutdown {
+		what = i18n.T("history.stopwsl")
+	}
+	sep := " " + ui.Sep() + " "
+	lines := wrapPieces("", "", w, piece{what, bold, true},
+		piece{sep + e.At.Local().Format("2006-01-02 15:04"), ui.Fg(t.Muted), true},
+		piece{sep + byWords(e.By), ui.Fg(t.Muted), true},
+		piece{sep + i18n.T("secs", int(math.Round(e.Took))), ui.Fg(t.Muted), true})
+	if e.Version != "" {
+		lines = append(lines, ui.Fg(t.Faint).Render(ui.Fit("wsl-spawner "+e.Version, w)))
+	}
+	for _, d := range e.Distros {
+		lines = append(lines, "")
+		word, cat := i18n.T("end."+d.Result), endCat(d.Result)
+		if e.What == "start" {
+			word, cat = i18n.T("result."+d.Result), ui.CatRunning
+			if d.Result == "error" {
+				word, cat = i18n.T("result.starterror"), ui.CatCut
+			}
+		}
+		head := bold.Render(d.Name) + "  " + ui.Fg(t.Cat[cat]).Render(word)
+		if d.Took > 0 {
+			head += ui.Fg(t.Muted).Render(sep + i18n.T("secs", int(math.Round(d.Took))))
+		}
+		lines = append(lines, ui.Fit(head, w))
+		lines = append(lines, m.stepRows(d, w)...)
+		if d.Err != "" {
+			lines = append(lines, m.wrapHangTo("    ", "    ", d.Err, w, ui.Fg(t.Cat[ui.CatCut]))...)
+		}
+	}
+	if e.Err != "" {
+		lines = append(lines, "")
+		lines = append(lines, m.wrapHangTo("✗ ", "  ", e.Err, w, ui.Fg(t.Cat[ui.CatCut]))...)
+	}
+	return cut(lines, h)
+}
+
+// minRunCol is the least width of a run's block standing beside another.
+const minRunCol = 56
 
 // runTitle names a run: what it does while it goes; once it has ended, what
 // it did, or, where something went wrong, what it was, as the lines under
@@ -1890,7 +2440,7 @@ func (m model) runBar(name string, r *runState, w int) string {
 	}
 	bw := max(8, min(48, w-24))
 	label := i18n.T("run.of", int(used.Round(time.Second)/time.Second), m.st.StopLimit)
-	return "    " + t.Bar(bw, int64(limit), ui.Part{Value: int64(min(used, limit)), Color: t.Cat[cat]}) + "  " + ui.Fg(t.Muted).Render(label)
+	return t.Bar(bw, int64(limit), ui.Part{Value: int64(min(used, limit)), Color: t.Cat[cat]}) + "  " + ui.Fg(t.Muted).Render(label)
 }
 
 // runUsed is the time a distribution's stop has taken: its steps done, the
@@ -1945,29 +2495,75 @@ func stepWidth(r *runState) int {
 
 // stepLine is one step of a stop: its mark, what it is, and its time, the
 // names width wide.
-func (m model) stepLine(s step, now time.Time, width int) string {
+func (m model) stepLine(s step, now time.Time, width, barW int, scale time.Duration) string {
 	t := m.th
 	var mark string
 	when := ""
+	color := t.Cat[ui.CatClean]
 	switch s.state {
 	case "wait":
 		mark = ui.Fg(t.Faint).Render("·")
 	case "run":
 		mark = ui.Fg(t.Cat[ui.CatStarting]).Render(spinner[m.spin%len(spinner)])
 		when = elapsed(now.Sub(s.since))
+		color = t.Cat[ui.CatStarting]
 	case "done":
 		mark = ui.Fg(t.Cat[ui.CatClean]).Render("✓")
 		when = i18n.T("secs", int(s.took.Round(time.Second)/time.Second))
 	case "late":
 		mark = ui.Fg(t.Cat[ui.CatWarn]).Render("!")
 		when = i18n.T("run.late", int(s.took.Round(time.Second)/time.Second))
+		color = t.Cat[ui.CatWarn]
 	default:
 		mark = ui.Fg(t.Cat[ui.CatCut]).Render("✗")
 		when = i18n.T("run.failed")
+		color = t.Cat[ui.CatCut]
 	}
-	what := stepWords(s)
-	gap := max(0, width-lipgloss.Width(what)) + 3
-	return "    " + mark + " " + what + strings.Repeat(" ", gap) + ui.Fg(t.Muted).Render(when)
+	line := mark + " " + ui.Fit(stepWords(s), width)
+	// The bar: the step's time against the block's longest, growing while
+	// it runs; a step still to come has its track only.
+	if barW >= 8 && scale > 0 {
+		used := s.took
+		if s.state == "run" {
+			used = now.Sub(s.since)
+		}
+		line += "  " + t.Bar(barW, int64(scale), ui.Part{Value: int64(min(used, scale)), Color: color})
+	}
+	return line + "  " + ui.Fg(t.Muted).Render(when)
+}
+
+// stepScale is the longest of a distribution's steps so far, the one its
+// steps' bars are drawn against: at least a second, so a quick stop's bars
+// still say which step took the time.
+func (m model) stepScale(steps []step, now time.Time) time.Duration {
+	longest := time.Second
+	for _, s := range steps {
+		d := s.took
+		if s.state == "run" {
+			d = now.Sub(s.since)
+		}
+		longest = max(longest, d)
+	}
+	return longest
+}
+
+// runColor is a run's block's edge: blue while it goes, then the color of
+// how it ended.
+func (m model) runColor(name string, r *runState) ui.Category {
+	res, ok := r.results[name]
+	switch {
+	case !ok:
+		return ui.CatStarting
+	case r.errs[name] != "" || res == "error":
+		return ui.CatCut
+	case res == "limit" || res == "failed":
+		return ui.CatWarn
+	case res == "busy":
+		return ui.CatAside
+	case res == "started" || res == "running":
+		return ui.CatRunning
+	}
+	return ui.CatClean
 }
 
 // stepWords names a step.
@@ -1988,6 +2584,26 @@ func stepWords(s step) string {
 		return i18n.T("step.terminate")
 	}
 	return s.key
+}
+
+// stepAbout says what the step running among steps does, or "" when none
+// runs.
+func stepAbout(steps []step) string {
+	for _, s := range steps {
+		if s.state != "run" {
+			continue
+		}
+		// A hook's own name is on its row: what every hook is, here.
+		key := s.key
+		if strings.HasPrefix(key, "hook:") {
+			key = "hook"
+		}
+		switch key {
+		case "hook", "units", "docker", "podman", "sync", "terminate":
+			return i18n.T("step.about." + key)
+		}
+	}
+	return ""
 }
 
 // resultWords says how one distribution's stop or start went.
@@ -2053,27 +2669,142 @@ func (m model) checkView() string {
 	case m.checkErr != nil:
 		lines = append(lines, "  "+ui.Fg(t.Cat[ui.CatCut]).Render("✗ "+errWords(m.checkErr)))
 	case m.check != nil:
+		// The verdict first, in one line: what to look at, and how many
+		// findings are fine.
+		lines = append(lines, "  "+m.checkSummary(), "")
+		if m.width >= wideMin {
+			// Wide: the groups in two columns, a rule between, so the whole
+			// check fits where a list would scroll.
+			lines = append(lines, m.checkColumns()...)
+			break
+		}
 		for i, g := range m.check.Groups {
 			if i > 0 {
 				lines = append(lines, "")
 			}
-			name := g.Name
-			if g.Key != "distro" {
-				name = i18n.T("check.g." + g.Key)
-			}
-			lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(t.Muted).Render(name))
-			for _, f := range g.Items {
-				text := i18n.T("check."+f.Key, jsonArgs(f.Args)...)
-				lines = append(lines, m.wrapHang("    "+findingMark(t, f.Mark)+" ", "      ", text, ui.Fg(t.Ink))...)
-				if f.DoKey != "" {
-					lines = append(lines, m.wrapHang("      → ", "        ", i18n.T("check."+f.DoKey, jsonArgs(f.DoArgs)...), ui.Fg(t.Muted))...)
-				}
-			}
+			lines = append(lines, m.groupLines(g, m.width-1)...)
 		}
 	}
 	shown, _ := m.scrolled(lines)
 	status := " " + ui.Fg(t.Muted).Render(i18n.T("check.title"))
 	return m.page(shown, status, m.listKeys([2]string{"r", i18n.T("key.reload")}))
+}
+
+// checkSummary is the check's verdict in a line: how many findings to look
+// at, in the color of the worst, and how many are fine.
+func (m model) checkSummary() string {
+	t := m.th
+	var look, fine int
+	for _, g := range m.check.Groups {
+		for _, f := range g.Items {
+			switch f.Mark {
+			case "warn", "bad":
+				look++
+			case "ok":
+				fine++
+			}
+		}
+	}
+	verdict := findingMark(t, "ok") + " " + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(i18n.T("check.sum.ok"))
+	if look > 0 {
+		cat := ui.CatWarn
+		if m.check.Worst == "bad" {
+			cat = ui.CatCut
+		}
+		verdict = findingMark(t, m.check.Worst) + " " + lipgloss.NewStyle().Bold(true).Foreground(t.Cat[cat]).Render(i18n.TN("check.sum.look", look, look))
+	}
+	return verdict + ui.Fg(t.Muted).Render("  "+ui.Sep()+"  "+i18n.TN("check.sum.fine", fine, fine))
+}
+
+// groupLines are a group of the check in w cells: its name after a square
+// in the color of its worst finding, then each finding, wrapped under its
+// words, with what to do about it.
+func (m model) groupLines(g api.CheckGroup, w int) []string {
+	t := m.th
+	name := g.Name
+	if g.Key != "distro" {
+		name = i18n.T("check.g." + g.Key)
+	}
+	// The group's worst finding colors its square: a glance finds the one
+	// to look at.
+	worst := ""
+	for _, f := range g.Items {
+		if rank(f.Mark) > rank(worst) {
+			worst = f.Mark
+		}
+	}
+	square := map[string]ui.Category{"ok": ui.CatClean, "warn": ui.CatWarn, "bad": ui.CatCut}
+	sq := ui.Fg(t.Faint).Render(ui.Block)
+	if c, ok := square[worst]; ok {
+		sq = ui.Fg(t.Cat[c]).Render(ui.Block)
+	}
+	lines := []string{"  " + sq + " " + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(ui.Fit(name, max(1, w-4)))}
+	for _, f := range g.Items {
+		text := i18n.T("check."+f.Key, jsonArgs(f.Args)...)
+		lines = append(lines, m.wrapHangTo("    "+findingMark(t, f.Mark)+" ", "      ", text, w, ui.Fg(t.Ink))...)
+		if f.DoKey != "" {
+			lines = append(lines, m.wrapHangTo("      → ", "        ", i18n.T("check."+f.DoKey, jsonArgs(f.DoArgs)...), w, ui.Fg(t.Muted))...)
+		}
+	}
+	return lines
+}
+
+// rank orders a finding's marks, the worst highest.
+func rank(mark string) int {
+	return map[string]int{"info": 1, "ok": 2, "warn": 3, "bad": 4}[mark]
+}
+
+// checkColumns are the check's groups in two columns, in their order: the
+// first ones on the left, the rest on the right, split where the taller
+// column is shortest. A rule stands between them.
+func (m model) checkColumns() []string {
+	t := m.th
+	colW := (m.width - 3) / 2
+	var groups [][]string
+	for _, g := range m.check.Groups {
+		groups = append(groups, m.groupLines(g, colW-1))
+	}
+	// height is the lines of groups[a:b], a blank between each two.
+	height := func(a, b int) int {
+		n := 0
+		for i := a; i < b; i++ {
+			n += len(groups[i])
+			if i > a {
+				n++
+			}
+		}
+		return n
+	}
+	split, best := len(groups), height(0, len(groups))
+	for k := 1; k < len(groups); k++ {
+		if h := max(height(0, k), height(k, len(groups))); h < best {
+			split, best = k, h
+		}
+	}
+	column := func(gs [][]string) []string {
+		var out []string
+		for i, g := range gs {
+			if i > 0 {
+				out = append(out, "")
+			}
+			out = append(out, g...)
+		}
+		return out
+	}
+	left, right := column(groups[:split]), column(groups[split:])
+	sep := ui.Fg(t.Rule).Render(" │ ")
+	var out []string
+	for i := 0; i < max(len(left), len(right)); i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		out = append(out, ui.Fit(l, colW)+sep+r)
+	}
+	return out
 }
 
 // findingMark is a finding's mark in its color.
@@ -2140,6 +2871,10 @@ func (m model) wrapHangTo(first, rest, s string, w int, st lipgloss.Style) []str
 // historyView is the stops and starts, newest first.
 func (m model) historyView() string {
 	t := m.th
+	// Wide: the runs on the left, one chosen, what it did on the right.
+	if m.width >= wideMin && len(m.hist) > 0 {
+		return m.historyPanes()
+	}
 	var lines []string
 	if len(m.hist) == 0 {
 		lines = append(lines, "  "+ui.Fg(t.Muted).Render(i18n.T("history.none")))

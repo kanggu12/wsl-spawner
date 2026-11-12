@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -30,6 +31,8 @@ var themes = append([]string{""}, config.Themes...)
 type screenFlags struct {
 	theme, snapshot, keys string
 	demo, cliMode, setup  bool
+	// at is how far into a stop the --keys began a --snapshot is drawn.
+	at time.Duration
 }
 
 // addScreenFlags puts the screen's flags on the root command.
@@ -40,7 +43,8 @@ func addScreenFlags(root *cobra.Command, f *screenFlags) {
 	root.Flags().StringVar(&f.keys, "keys", "", "keys to press before --snapshot prints, like \"down s enter\"")
 	root.Flags().BoolVar(&f.cliMode, "cli", false, "with --snapshot, print the demo's overview instead of the screen")
 	root.Flags().BoolVar(&f.setup, "setup", false, "with --snapshot, print the setup wizard instead of the screen")
-	for _, name := range []string{"snapshot", "keys", "cli", "setup"} {
+	root.Flags().DurationVar(&f.at, "at", 0, "with --snapshot and a stop in --keys, the frame this far into the stop, like 9s")
+	for _, name := range []string{"snapshot", "keys", "cli", "setup", "at"} {
 		_ = root.Flags().MarkHidden(name)
 	}
 }
@@ -83,7 +87,7 @@ func bare(cmd *cobra.Command, p *apps, f screenFlags) error {
 			fmt.Fprintln(out, tui.SetupSnapshot(c, w, h, f.theme != "light", tui.ParseKeys(f.keys)))
 			return nil
 		}
-		fmt.Fprintln(out, tui.Snapshot(c, w, h, f.theme != "light", tui.ParseKeys(f.keys), demo.Now))
+		fmt.Fprintln(out, tui.SnapshotAt(c, w, h, f.theme != "light", tui.ParseKeys(f.keys), demo.Now, f.at))
 		return nil
 	}
 	if f.demo {

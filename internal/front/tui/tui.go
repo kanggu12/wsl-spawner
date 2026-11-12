@@ -47,8 +47,20 @@ func darkTerminal() bool { return lipgloss.HasDarkBackground(os.Stdin, os.Stdout
 // moment now. A stop or start the keys began plays to its end, all its
 // steps taken at once.
 func Snapshot(c api.Client, w, h int, dark bool, keys []string, now time.Time) string {
+	return SnapshotAt(c, w, h, dark, keys, now, 0)
+}
+
+// SnapshotAt is Snapshot with a stop the keys began played only to at
+// after its start: each step's end moves the clock on by the time the step
+// says it took, and the frame is drawn at that point, the step then under
+// way still running. One distribution's steps come one after another, so
+// the frame of a stop of one is as it was at that moment. 0, or an at past
+// the stop's end, plays it to its end as Snapshot does.
+func SnapshotAt(c api.Client, w, h int, dark bool, keys []string, now time.Time, at time.Duration) string {
 	m := newModel(context.Background(), c, dark)
 	m.width, m.height, m.now = w, h, now
+	// How far into a stop the frame is: 0 is to its end.
+	m.playTo = at
 	// Load as Init would, but in this goroutine.
 	next, _ := m.Update(m.load()())
 	m = next.(model)
@@ -73,6 +85,11 @@ func (m model) settle(cmd tea.Cmd) model {
 		if _, ok := msg.(tickMsg); ok {
 			return m.drain()
 		}
+		// A frame part way into a stop ends here.
+		var past bool
+		if m, past = m.clock(msg); past {
+			return m
+		}
 		var next tea.Model
 		next, cmd = m.Update(msg)
 		m = next.(model)
@@ -84,7 +101,13 @@ func (m model) settle(cmd tea.Cmd) model {
 // for.
 func (m model) drain() model {
 	for m.run != nil && !m.run.done {
-		next, cmd := m.Update(<-m.run.events)
+		msg := <-m.run.events
+		// A frame part way into a stop ends here.
+		var past bool
+		if m, past = m.clock(msg); past {
+			return m
+		}
+		next, cmd := m.Update(msg)
 		m = next.(model)
 		// The reload a run's end asks for.
 		if m.run.done {
@@ -92,6 +115,28 @@ func (m model) drain() model {
 		}
 	}
 	return m
+}
+
+// clock moves a snapshot's clock on as a stop's step ends, by the time the
+// step says it took, when the frame is to be drawn part way into the stop
+// (playTo): past is set, the clock at playTo, for the step that would end
+// after it, which is left running for the frame.
+func (m model) clock(msg tea.Msg) (_ model, past bool) {
+	e, ok := msg.(eventMsg)
+	// Only a step's end moves the clock, and only for such a frame.
+	if !ok || m.playTo <= 0 || m.run == nil || e.Event != "line" || e.Kind != "done" {
+		return m, false
+	}
+	// The time the step says it took.
+	took := time.Duration(e.Took * float64(time.Second))
+	if m.now.Add(took).Sub(m.run.started) > m.playTo {
+		// Past the moment asked for: the frame is drawn now, the step running.
+		m.now = m.run.started.Add(m.playTo)
+		return m, true
+	}
+	// The step ended this much later than it began.
+	m.now = m.now.Add(took)
+	return m, false
 }
 
 // runCmd runs a command, and a batch's commands, returning the first

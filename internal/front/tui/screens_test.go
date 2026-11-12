@@ -85,18 +85,34 @@ func TestEveryStateFitsEverySizeInBothLanguages(t *testing.T) {
 }
 
 func TestTheMainScreenSaysWhatMatters(t *testing.T) {
+	// At the README's size: two panes; the table names whose a distribution
+	// is in short, and the last stop says who asked in short words, as its
+	// line has room for.
 	f := ansi.Strip(frame(t, "en", 120, 30, ""))
+	pane := tui.PaneText(f)
 	for _, want := range []string{
-		"wsl-spawner", "WSL 3.0.5.0", "sign-out hook", "1 kept running",
-		"Ubuntu-24.04", "at sign-in", "3/4", "clean 11-11 22:36", "docker-desktop", "left to Docker Desktop",
-		"Choices", "✓ set up", "✓ kept running", "✓ starts at sign-in",
-		"Next stop", "60 s of 300", "hook 10-backup-db", "docker: 3 containers, the longest stop 60 s",
-		"then WSL ends the rest", "41 s · as Windows signed out", "db brought back", "Recent",
+		"wsl-spawner", "WSL 3.0.5.0", "sign-out hook", "1 kept running", "1 at sign-in",
+		"Ubuntu-24.04", "at sign-in", "3/4", "docker-desktop", "Docker Desktop's", "Recent",
 		"s  stop", "q  quit",
 	} {
 		if !strings.Contains(f, want) {
 			t.Errorf("no %q in\n%s", want, f)
 		}
+	}
+	for _, want := range []string{
+		"clean 11-11 22:36 · 41 s · sign-out", "hook 10-backup-db", "docker: 3 containers", "sync to disk", "38 s",
+		"db brought back", "Next stop", "60 s of 300", "docker: 3 containers, the longest stop 60 s",
+		"then WSL ends the rest", "Containers", "Choices", "✓ set up", "✓ kept running", "✓ starts at sign-in",
+	} {
+		if !strings.Contains(pane, want) {
+			t.Errorf("no %q in the right pane of\n%s", want, f)
+		}
+	}
+	// Wider, the table says each last stop with its time, and the pane who
+	// asked in whole words.
+	f = ansi.Strip(frame(t, "en", 160, 40, ""))
+	if !strings.Contains(tui.TableRow(f, "Ubuntu-24.04"), "clean 11-11 22:36") || !strings.Contains(tui.PaneText(f), "41 s · as Windows signed out") {
+		t.Errorf("160x40:\n%s", f)
 	}
 }
 
@@ -205,12 +221,16 @@ func TestAWideScreenHasTheNewestStopsBesideTheRest(t *testing.T) {
 	// From about 140 columns the newest stops and starts stand in the right
 	// column, under the containers, rather than under everything with the
 	// right half empty; at 120 they stay under the details.
-	for _, s := range [][2]int{{140, 40}, {160, 45}, {200, 50}} {
+	for _, s := range [][2]int{{120, 30}, {140, 40}, {160, 45}, {200, 50}} {
 		f := ansi.Strip(frame(t, "en", s[0], s[1], ""))
 		lines := strings.Split(f, "\n")
-		recent, containers := lineWith(f, "Recent"), lineWith(f, "Containers")
-		if strings.Index(recent, "Recent") != strings.Index(containers, "Containers") {
-			t.Errorf("%dx%d: Recent is not under Containers:\n%s", s[0], s[1], f)
+		// The newest stops and starts under the table, in the left pane; the
+		// selected distribution's sections in the right one.
+		if !strings.Contains(strings.Join(tui.LeftPane(f), "\n"), "\n   Recent") {
+			t.Errorf("%dx%d: Recent is not under the table:\n%s", s[0], s[1], f)
+		}
+		if right := strings.Join(tui.RightPane(f), "\n"); !strings.Contains(right, "Containers") || !strings.Contains(right, "Last stop") {
+			t.Errorf("%dx%d: the details are not beside the table:\n%s", s[0], s[1], f)
 		}
 		// Every line exactly as wide as the screen, no more lines than it has.
 		for i, l := range lines {
@@ -220,15 +240,18 @@ func TestAWideScreenHasTheNewestStopsBesideTheRest(t *testing.T) {
 			}
 		}
 	}
-	f := ansi.Strip(frame(t, "en", 120, 30, ""))
+	// Under the two panes' width, one column: Recent under the details.
+	f := ansi.Strip(frame(t, "en", 100, 30, ""))
 	if strings.Index(lineWith(f, "Recent"), "Recent") != 3 {
-		t.Errorf("120x30: Recent is not under the details:\n%s", f)
+		t.Errorf("100x30: Recent is not under the details:\n%s", f)
 	}
-	// Beside a narrower column, the newest stops and starts still stand
-	// beside it only where they are not cut short.
+	// The newest stops and starts are never cut short: a long one goes on
+	// under its first line.
 	for _, keys := range []string{"s enter enter", "down down", "S enter enter down down"} {
 		for _, w := range []int{120, 130, 140, 200} {
-			if f := ansi.Strip(frame(t, "en", w, 40, keys)); strings.Contains(f, "…") {
+			// In the left pane: an image beside a container may be shortened
+			// in its middle, as it is meant to.
+			if f := ansi.Strip(frame(t, "en", w, 40, keys)); strings.Contains(strings.Join(tui.LeftPane(f), "\n"), "…") {
 				t.Errorf("%q at %d: cut short:\n%s", keys, w, f)
 			}
 		}
@@ -239,8 +262,8 @@ func TestALongLineWrapsLeftAndLeavesTheContainersTheirRoom(t *testing.T) {
 	// After a start that brought back three, the line that says so is long:
 	// it wraps in the left column, and the containers keep the room for
 	// their images, as before it.
-	f := ansi.Strip(frame(t, "en", 120, 30, "s enter enter t enter enter"))
-	if !strings.Contains(lineWith(f, "▪ web "), "nginx:1.27") || !strings.Contains(f, "its policy · 11-12 09:30") {
+	f := ansi.Strip(frame(t, "en", 160, 40, "s enter enter t enter enter"))
+	if !strings.Contains(lineWith(f, "▪ web "), "nginx:1.27") || !strings.Contains(tui.PaneText(f), "its policy · 11-12 09:30") {
 		t.Errorf("%s", f)
 	}
 }
@@ -262,7 +285,7 @@ func TestADistributionStoppedHereKeepsWhatIsSetUpInIt(t *testing.T) {
 	// screen still knows it was set up, kept running and started at sign-in,
 	// and takes its last stop from the history.
 	f := ansi.Strip(frame(t, "en", 120, 30, "s enter enter"))
-	row := lineWith(f, "Ubuntu-24.04  ")
+	row := tui.TableRow(f, "Ubuntu-24.04")
 	for _, want := range []string{"stopped", "at sign-in"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("no %q in its row %q", want, row)
@@ -283,7 +306,8 @@ func TestAStoppedDistributionSaysWhatIsKnownOnce(t *testing.T) {
 	// Debian, never read: the verdict says its choices show once it runs,
 	// once; no section says it again, and no last stop is a lone dash.
 	f := ansi.Strip(frame(t, "en", 120, 30, "down"))
-	if n := strings.Count(strings.ToLower(f), "shows once it runs"); n != 1 {
+	all := strings.ToLower(tui.PaneText(f) + " " + strings.Join(strings.Fields(strings.Join(tui.LeftPane(f), " ")), " "))
+	if n := strings.Count(all, "shows once it runs"); n != 1 {
 		t.Errorf("said %d times:\n%s", n, f)
 	}
 	for _, l := range strings.Split(f, "\n") {
@@ -396,7 +420,7 @@ func TestTakingOutSaysKeepingItRunningEnds(t *testing.T) {
 
 func TestAStopOfEverythingShowsWSLStopping(t *testing.T) {
 	f := ansi.Strip(frame(t, "en", 120, 30, "S enter"))
-	if !strings.Contains(f, "then WSL") || !strings.Contains(lineAfter(f, "  WSL"), "✓ stopped") {
+	if !strings.Contains(f, "then WSL") || !strings.Contains(lineAfter(f, "  ▌ WSL"), "✓ stopped") {
 		t.Fatalf("%s", f)
 	}
 }
@@ -424,7 +448,7 @@ func TestStoppingEverythingWithNothingOfOursRunningStopsWSL(t *testing.T) {
 	}
 	// Done, the stop runs to WSL's own: no command refused, WSL stopped.
 	f = ansi.Strip(frame(t, "en", 120, 30, "S enter enter S enter"))
-	if !strings.Contains(lineAfter(f, "  WSL"), "✓ stopped") || strings.Contains(f, "✗") {
+	if !strings.Contains(lineAfter(f, "  ▌ WSL"), "✓ stopped") || strings.Contains(f, "✗") {
 		t.Fatalf("%s", f)
 	}
 	// With only another tool's distribution running, WSL stops that one too,
@@ -548,8 +572,8 @@ func TestTheHistorySaysWhoAskedWhole(t *testing.T) {
 
 func TestALastStopWithNothingNotedInsideComesFromTheHistory(t *testing.T) {
 	// Work is not set up: its last stop is the history's.
-	f := ansi.Strip(frame(t, "en", 120, 30, ""))
-	if row := lineWith(f, "Work  "); !strings.Contains(row, "clean 11-11 22:36") {
+	f := ansi.Strip(frame(t, "en", 140, 30, ""))
+	if row := tui.TableRow(f, "Work"); !strings.Contains(row, "clean 11-11 22:36") {
 		t.Fatalf("Work's row: %q", row)
 	}
 }
@@ -558,11 +582,11 @@ func TestSettingUpKeepsTheLastStopTheHistoryHas(t *testing.T) {
 	// Work, set up just now: what is inside it notes this start alone, the
 	// first. Its last stop is still the history's, and the first start a
 	// fact beside its name.
-	f := ansi.Strip(frame(t, "en", 120, 30, "down down m enter"))
-	if row := lineWith(f, "Work  "); !strings.Contains(row, "clean 11-11 22:36") {
+	f := ansi.Strip(frame(t, "en", 160, 30, "down down m enter"))
+	if row := tui.TableRow(f, "Work"); !strings.Contains(row, "clean 11-11 22:36") {
 		t.Errorf("Work's row %q in\n%s", row, f)
 	}
-	if !strings.Contains(f, "clean 11-11 22:36 · 3 s · as Windows signed out") || !strings.Contains(lineWith(f, "Work  systemd"), "first start noted") {
+	if !strings.Contains(tui.PaneText(f), "clean 11-11 22:36 · 3 s · as Windows signed out") || !strings.Contains(tui.PaneText(f), "first start noted") {
 		t.Errorf("%s", f)
 	}
 	// The status the commands print says the same.
@@ -587,8 +611,9 @@ func TestSettingUpKeepsTheLastStopTheHistoryHas(t *testing.T) {
 func TestTheCheckAndTheMainScreenAgreeOnALastStop(t *testing.T) {
 	// Work is not set up: nothing in it notes how its starts end, but the
 	// history holds wsl-spawner's clean stop of it, which the main screen
-	// shows. The check says both, and nowhere that it is not known.
-	f := ansi.Strip(frame(t, "en", 120, 60, "c"))
+	// shows. The check says both, and nowhere that it is not known. In one
+	// column, under 112 cells, each sentence keeps to a line.
+	f := ansi.Strip(frame(t, "en", 104, 60, "c"))
 	for _, want := range []string{"nothing in it notes how its starts end", "the history holds wsl-spawner's last stop of it: clean (2026-11-11 22:36)"} {
 		if !strings.Contains(f, want) {
 			t.Errorf("no %q in\n%s", want, f)
@@ -753,8 +778,9 @@ func TestTheNewestStopsStayBesideTheDetailsInKoreanToo(t *testing.T) {
 		w, h        int
 	}{{"ko", "최근", 120, 30}, {"en", "Recent", 140, 40}, {"ko", "최근", 140, 40}} {
 		f := ansi.Strip(frame(t, c.lang, c.w, c.h, ""))
-		if row := lineWith(f, c.title); row == "" || strings.Index(row, c.title) < 20 {
-			t.Errorf("%s %dx%d: the newest stops are not beside the details:\n%s", c.lang, c.w, c.h, f)
+		left := strings.Join(tui.LeftPane(f), "\n")
+		if !strings.Contains(left, "\n   "+c.title) || len(tui.RightPane(f)) < c.h-6 {
+			t.Errorf("%s %dx%d: the newest stops are not under the table with the details beside:\n%s", c.lang, c.w, c.h, f)
 		}
 	}
 	i18n.Set(i18n.English)

@@ -133,8 +133,23 @@ type runState struct {
 // model is the screen's state.
 type model struct {
 	ctx context.Context
-	c   api.Client
-	th  ui.Theme
+	// playTo is, in a snapshot, how far into a stop its frame is drawn: 0
+	// plays the stop to its end.
+	playTo time.Duration
+	// wordOnly has the table say a last stop in its word alone, its time
+	// left to the pane beside it: set for the left pane of a wide screen.
+	wordOnly bool
+	// shortOwner has the table name the tool a distribution is left to in
+	// short, where its long words would not leave the table its room.
+	shortOwner bool
+	// noSteps has a run of the history say how it went in its word alone:
+	// in the list beside the pane that names the step.
+	noSteps bool
+	// shortBy has a last stop say who asked in the table of runs' short
+	// words: where the long ones do not fit its line.
+	shortBy bool
+	c       api.Client
+	th      ui.Theme
 	// width and height are the terminal's.
 	width, height int
 	mode          mode

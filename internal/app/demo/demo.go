@@ -179,9 +179,19 @@ func seedHistory(dir string) error {
 		return history.Entry{At: at, Took: took, What: "start", By: "logon",
 			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "started", Took: took}}}
 	}
+	// steps are Ubuntu-24.04's stop as its setup makes it: its hook, Docker
+	// with its three running containers, the sync; a stop with a step that
+	// failed has its hook end with exit code 1.
+	steps := func(took float64, result string) []history.Step {
+		hook := history.Step{Step: "hook", Hook: "10-backup-db", Took: 2}
+		if result == "failed" {
+			hook.Code, hook.Took = 1, 1
+		}
+		return []history.Step{hook, {Step: "docker", Count: 3, Took: took - hook.Took - 1}, {Step: "sync", Took: 1}}
+	}
 	stop := func(at time.Time, took float64, result string) history.Entry {
 		return history.Entry{At: at, Took: took + 1, What: "stop", By: "signout", Shutdown: true,
-			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: result, Took: took}}}
+			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: result, Took: took, Steps: steps(took, result)}}}
 	}
 	for _, e := range []history.Entry{
 		start(day(5, 9, 2), 8), stop(day(5, 23, 10), 39, "clean"),
@@ -190,7 +200,8 @@ func seedHistory(dir string) error {
 		start(day(2, 8, 59), 9), stop(night.Add(-26*time.Hour), 37, "clean"),
 		start(day(1, 8, 57), 8),
 		{At: night, Took: 43, What: "stop", By: "signout", Shutdown: true,
-			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "clean", Took: 41}, {Name: "Work", Result: "clean", Took: 3}}},
+			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "clean", Took: 41, Steps: steps(41, "clean")},
+				{Name: "Work", Result: "clean", Took: 3, Steps: []history.Step{{Step: "docker", Count: 1, Took: 2}, {Step: "sync", Took: 1}}}}},
 		start(night.Add(10*time.Hour+22*time.Minute), 9),
 	} {
 		if err := s.Add(e); err != nil {

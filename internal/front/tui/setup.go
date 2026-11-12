@@ -391,6 +391,9 @@ func (w wizard) render() string {
 	}
 	t := w.th
 	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Muted).Render("  "+ui.Sep()+"  "+i18n.T("wiz.title"))
+	if w.width >= wideWizard {
+		return w.renderWide(m, head)
+	}
 	lines := []string{head, "", " " + w.progress(), ""}
 	var body []string
 	keys := [][2]string{{"⏎", i18n.T("wiz.key.next")}, {"←", i18n.T("wiz.key.back")}, {"q", i18n.T("wiz.key.quit")}}
@@ -409,6 +412,137 @@ func (w wizard) render() string {
 	}
 	lines = append(lines[:w.height-1], m.keyBar(keys))
 	return m.frame(lines)
+}
+
+// wideWizard is the width from which the wizard is a rail of its steps
+// and a panel beside it, as wsl-shrinker's is.
+const wideWizard = 80
+
+// renderWide draws the wizard on a wide terminal: the step on the right of
+// the header, a bar of one segment per step under it, then the steps as a
+// rail on the left and the open page on a panel beside it, down to the
+// keys. The rail's open step stands on the panel's color, as a tab of it.
+func (w wizard) renderWide(m model, head string) string {
+	t := w.th
+	n := min(w.page, pages-1) + 1
+	// The step and its name, as the dots used to say them.
+	step := ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" "+ui.Sep()+" ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(w.pageName(min(w.page, pages-1)))
+	if gap := w.width - lipgloss.Width(head) - lipgloss.Width(step) - 1; gap >= 2 {
+		head += strings.Repeat(" ", gap) + step
+	}
+	lines := []string{head, "", " " + w.segments(w.width-2), ""}
+	railW := w.railWidth()
+	// The panel: from beside the rail to a cell short of the edge; its
+	// page wrapped two cells in from each of its sides.
+	pw := w.width - 1 - railW - 1 - 1
+	inner := w
+	inner.width = pw - 3
+	keys := [][2]string{{"⏎", i18n.T("wiz.key.next")}, {"←", i18n.T("wiz.key.back")}, {"q", i18n.T("wiz.key.quit")}}
+	var page []string
+	switch {
+	case !w.read:
+		page = []string{"  " + ui.Fg(t.Muted).Render(i18n.T("loading"))}
+	case w.err != nil:
+		page = inner.wrapErr(w.err)
+		keys = [][2]string{{"q", i18n.T("wiz.key.quit")}}
+	default:
+		page, keys = inner.pageBody(keys)
+	}
+	// The body runs down to a blank row above the keys.
+	bodyH := w.height - len(lines) - 2
+	panel := []string{ui.Highlight("", t.Selected, pw)}
+	for _, l := range page {
+		panel = append(panel, ui.Highlight(" "+l, t.Selected, pw))
+	}
+	rail := w.rail(railW)
+	for i := 0; i < bodyH; i++ {
+		r, p := "", ui.Highlight("", t.Selected, pw)
+		if i < len(rail) {
+			r = rail[i]
+		}
+		if i < len(panel) {
+			p = panel[i]
+		}
+		lines = append(lines, " "+ui.Fit(r, railW)+" "+p)
+	}
+	lines = append(lines, "")
+	for len(lines) < w.height-1 {
+		lines = append(lines, "")
+	}
+	lines = append(lines[:w.height-1], m.keyBar(keys))
+	return m.frame(lines)
+}
+
+// wrapErr is an error on the panel, wrapped to its width.
+func (w wizard) wrapErr(err error) []string {
+	m := model{th: w.th, width: w.width, height: w.height}
+	return m.wrapHang("  "+ui.Fg(w.th.Cat[ui.CatCut]).Render("✗")+" ", "    ", errWords(err), ui.Fg(w.th.Cat[ui.CatCut]))
+}
+
+// pageName is a step's name on the rail and in the header: the last is
+// what is being done, then done, once the changes are made.
+func (w wizard) pageName(i int) string {
+	if i == pages-1 && w.page == pApply {
+		if w.done {
+			return i18n.T("wiz.page.done")
+		}
+		return i18n.T("wiz.page.applying")
+	}
+	return i18n.T(fmt.Sprintf("wiz.page.%d", i))
+}
+
+// railWidth is the rail's width: the longest step's name, its mark and a
+// cell on each side.
+func (w wizard) railWidth() int {
+	n := 0
+	for i := 0; i < pages; i++ {
+		n = max(n, lipgloss.Width(w.pageName(i)))
+	}
+	return n + 6
+}
+
+// rail is the steps, one a row: those done checked and quiet, the open
+// one bold on the panel's color, those to come faint.
+func (w wizard) rail(rw int) []string {
+	t := w.th
+	cur := min(w.page, pages-1)
+	var out []string
+	for i := 0; i < pages; i++ {
+		name := w.pageName(i)
+		switch {
+		case i < cur:
+			out = append(out, " "+ui.Fg(t.Mark).Render("✓")+" "+ui.Fg(t.Muted).Render(name))
+		case i == cur:
+			out = append(out, ui.Highlight(" "+ui.Fg(t.Mark).Render(ui.Block)+" "+lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(name), t.Selected, rw))
+		default:
+			out = append(out, " "+ui.Fg(t.Faint).Render(ui.Block+" "+name))
+		}
+	}
+	return out
+}
+
+// segments is the wizard's progress in w cells: a segment for each step,
+// a cell between, those done in the tool's color, the open one blue as a
+// thing under way, those to come as track.
+func (w wizard) segments(sw int) string {
+	t := w.th
+	cur := min(w.page, pages-1)
+	seg := max(1, (sw-(pages-1))/pages)
+	var b strings.Builder
+	for i := 0; i < pages; i++ {
+		c := t.Track
+		switch {
+		case i < cur || (i == cur && w.page == pApply && w.done):
+			c = t.Mark
+		case i == cur:
+			c = t.Cat[ui.CatStarting]
+		}
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(ui.Fg(c).Render(strings.Repeat(ui.Block, seg)))
+	}
+	return b.String()
 }
 
 // progress is where the wizard is: a dot for each page, the one open in

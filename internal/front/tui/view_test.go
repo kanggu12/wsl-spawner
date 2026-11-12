@@ -51,8 +51,9 @@ func TestLongContainerNamesKeepTheirStateAndWordsWhole(t *testing.T) {
 				if !strings.Contains(row, "running  "+words[i%2]) {
 					t.Errorf("set up %v, %d: the state or its words cut in %q", setUp, w, row)
 				}
-				// From 120 columns, the names stand whole.
-				if w >= 120 && !strings.Contains(row, n) {
+				// The names stand whole where the details have room for them:
+				// from 120 columns on one; beside the table, from 140.
+				if w >= 140 && !strings.Contains(row, n) {
 					t.Errorf("set up %v, %d: %s cut in %q", setUp, w, n, row)
 				}
 			}
@@ -133,7 +134,7 @@ func TestAContainerRemovedAsItStopsIsNeverSaidToComeBack(t *testing.T) {
 		t.Fatalf("%s", f)
 	}
 	// The verdict counts only the one that comes back.
-	if !strings.Contains(f, "1 container comes back") {
+	if !strings.Contains(PaneText(f), "1 container comes back") {
 		t.Fatalf("the count:\n%s", f)
 	}
 }
@@ -282,7 +283,7 @@ func TestAnEngineAsleepOrAnothersIsSaidQuietlyNotAsDown(t *testing.T) {
 		}
 		m := mainWith(120, 30, 0, api.Distro{Name: "Work", Running: true, Kind: "set-up", Version: 2,
 			Probe: &api.Probe{Systemd: "running", SetUp: true, Engines: engines, EngineStates: map[string]string{"docker": state}, LastEnd: api.End{How: "unknown"}}})
-		row := lineWith(ansi.Strip(m.View().Content), "Work ")
+		row := TableRow(ansi.Strip(m.View().Content), "Work")
 		if !strings.Contains(row, want) {
 			t.Errorf("%s: %q", state, row)
 		}

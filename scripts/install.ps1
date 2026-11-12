@@ -35,6 +35,12 @@
     $repo = 'kanggu12/wsl-spawner'
     $base = if ($env:WSL_SPAWNER_BASE_URL) { $env:WSL_SPAWNER_BASE_URL } else { "https://github.com/$repo/releases/download" }
     $binDir = if ($env:WSL_SPAWNER_BIN_DIR) { $env:WSL_SPAWNER_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner' }
+    # Releases come over https only: over http, with their own checksums, a
+    # download could be anything. The folder is a full path: a relative one
+    # would go on the PATH as written, a folder under whatever directory a
+    # terminal happens to be in.
+    if ($base -notmatch '^https://') { throw 'wsl-spawner install: WSL_SPAWNER_BASE_URL must be an https:// address' }
+    if ($binDir -notmatch '^([A-Za-z]:[\\/]|\\\\[^\\/])') { throw 'wsl-spawner install: WSL_SPAWNER_BIN_DIR must be a full path, like C:\Program Files\wsl-spawner' }
     # The program's three files, in the folder and in each zip: the
     # program, the same built with no console (the sign-in program and the
     # sign-out hook start it, so no window opens), and the WSL launcher.
@@ -158,8 +164,12 @@
       foreach ($f in $files) {
         foreach ($n in $f, "$f.new") {
           $p = Join-Path $binDir $n
-          if (Test-Path -LiteralPath $p) { $found++ }
-          Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+          # Only a file: a folder of that name is not the program's, and
+          # Remove-Item would take it, with what is in it.
+          if (Test-Path -LiteralPath $p -PathType Leaf) {
+            $found++
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+          }
         }
       }
       if ($found) { Write-Host "removed wsl-spawner from $binDir" } else { Write-Host "wsl-spawner is not installed in $binDir" }

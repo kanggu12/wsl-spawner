@@ -34,7 +34,7 @@ func TestReadProbesOnlyWhatRunsAndIsOurs(t *testing.T) {
 			return "", errors.New("not the probe")
 		}
 		if distro == "Ubuntu-24.04" {
-			return "probe=1\nstart_script=" + inside.StartScriptMark + "1\nend=1\n", nil
+			return "probe=1\nstart_script=" + inside.StartScriptMark + inside.StartScriptVersion + "\nend=1\n", nil
 		}
 		return "probe=1\nend=1\n", nil
 	}

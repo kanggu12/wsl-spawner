@@ -43,6 +43,8 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 - **No program stays running on Windows.** The sign-in program starts the distributions and ends; keeping one running
   is a service inside it; the sign-out hook runs and ends.
 - **A distribution is never started to be read.** One that does not run says nothing about what runs in it.
+- **The engines are root's.** The scripts run as root and ask root's engines: the containers of another user's engine,
+  rootless Podman's or rootless Docker's, are not seen, stopped or brought back.
 
 ## The tests
 

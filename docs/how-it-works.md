@@ -2,12 +2,16 @@
 
 wsl-spawner runs on Windows (`wsl-spawner.exe`), and in a WSL terminal through a launcher that hands each command to it.
 It reaches a distribution only through `wsl.exe`, as root, with scripts of its own; it never starts a distribution
-that does not run just to read it.
+that does not run just to read it, nor Docker's daemon: one stopped by hand, with only its socket listening as Docker's
+packages leave it, is not asked anything, as asking would start it, and reads as asleep. What a distribution says
+(a hook's name, a container's name) is shown with every control character turned into a question mark.
 
 ## A stop
 
 `wsl-spawner stop NAME`, `S` on the screen, and the sign-out hook all stop a distribution the same way. A script runs
-inside it as root, and says each step as it goes:
+inside it as root, and says each step as it goes. One stop runs in a distribution at a time: a second one, as the
+sign-out hook's while a stop asked by hand is at work, finds the first's lock in `/run`, changes nothing and leaves the
+distribution to it; with `--shutdown`, WSL's own stop waits for that first stop to end.
 
 1. **The containers to bring back are noted** in `/var/lib/wsl-spawner/resume`, before anything stops, so a stop cut
    short still brings them back: every running container (`resume = "running"`), or those with a restart policy of
@@ -24,13 +28,16 @@ inside it as root, and says each step as it goes:
    and `always` bring them back when the daemon starts. systemd would end the daemon at its own stop timeout (90
    seconds by default): for this stop, a drop-in in `/run` gives it all the time left. With `live-restore` on, the
    daemon leaves its containers running, so they are stopped first, each with its own timeout. Without systemd, the
-   daemon `/var/run/docker.pid` names gets `TERM` and is waited for, when that process is `dockerd`; with no such
-   daemon to ask, the step fails.
+   daemon `/var/run/docker.pid` names gets `TERM` and is waited for, when that process is `dockerd`. A `docker` that
+   answers for a daemon that is not this distribution's own, as Docker Desktop's integration and a `podman-docker`
+   shim do, is left alone: its containers are not stopped, listed or brought back.
 5. **Podman.** It has no daemon: its running containers are stopped, each with its own stop timeout.
 6. **Sync.** `journalctl --sync` and `sync`, so what the services wrote is on the disk.
 7. **The record.** `/var/lib/wsl-spawner/last-stop`: which start of the distribution it stopped, when, how long it
    took, how it ended (`clean`, `limit` when a step ran out of the time left, `failed` when one failed) and who asked.
-   Only where wsl-spawner is set up.
+   Only where wsl-spawner is set up. Each of the stop's own files is written beside the old one and moved into its
+   place: where one cannot be written, as on a full disk, the old one stays and the stop ends `failed`, with a step
+   `record` that says so.
 
 Each step gets `TERM` when its time is up; one that goes on is killed 5 seconds later, where the distribution's
 `timeout` can do that, and a step that went on past its time ran out of it, whatever it returned.
@@ -54,8 +61,8 @@ slowest. That is what wsl-spawner asks for, with enough time.
 
 `wsl-spawner hook install` adds a sign-out script to the local Group Policy, after any other: `wsl-spawnerw.exe logoff`,
 the build of wsl-spawner with no console, so no window opens. Windows runs the sign-out scripts as you sign out, and
-before every shutdown and restart, an update's included, and waits for them, up to the policy's wait for all of them
-together (600 seconds by default): the hook, last, has what the others leave. The hook stops every running
+before every shutdown and restart, those an update makes too, and waits for them, up to the policy's wait for all of
+them together (600 seconds by default): the hook, last, has what the others leave. The hook stops every running
 distribution of wsl-spawner's as above, then WSL. Windows runs the PowerShell sign-out scripts (`psscripts.ini`) after
 these unless it is set to run them first, and a domain's after the local ones: `hook status` lists the PowerShell ones
 and the order the policy gives them.
@@ -67,6 +74,15 @@ run as you, wsl-spawner starts the change as one, and Windows asks. Then, as you
 exit code 3. Every other sign-out script stays as Windows runs it: those it runs are indexed again from 0, and one after
 a missing index still does not run. A `scripts.ini` or `gpt.ini` wsl-spawner cannot read for certain as Windows does is
 left as it is, and the command says why. The hook and a sign-in program need wsl-spawner on a fixed disk of this PC.
+The hook, which is in a policy for every user of the PC and runs as whoever signs out, an administrator among them,
+also needs wsl-spawner where no one but you, the system and the administrators can write: it checks the owner and the
+access list of the program, its folder and every folder above, and refuses to install otherwise, naming who may change
+what. The install script's own folder, under your profile, is such a place; a folder made under a drive's root, such as
+`C:\tools`, usually lets every user write in it. A drive's root itself is not counted for being deleted: no one deletes
+it. Links and junctions on the way are followed to where they lead, and checked there too. For a standard user, whom
+Windows would have run the program with an administrator's rights, only the administrators may write there: an
+administrator's install under Program Files ([For a standard user](setup.md#for-a-standard-user)). `check` says it of
+a hook already installed, with that hook's own way out.
 
 Another copy's hook, one an install moved elsewhere or a second install left, is told apart. `hook install`,
 `hook remove` and `uninstall` take out one whose program is gone, and say so first; one whose program is there, or
@@ -89,7 +105,11 @@ and Podman. The script:
   start in a scope of their own, which systemd does not end with the service. What became of each is kept in
   `/var/lib/wsl-spawner/resumed`. A Docker daemon systemd is still starting is waited for, a minute at most; the
   containers of an engine that does not answer stay to bring back the next time the service runs. A stop that runs
-  meanwhile writes its own list, which stands.
+  meanwhile writes its own list, which stands. One run of the script at a time: a second one leaves it all to the
+  first.
+
+Setting up starts that service and does not wait for it, so a set-up never takes longer than WSL lets a command run,
+however long an engine takes to answer.
 
 How the start before this one ended is then known: the last stop's record names a start; when it is the one before
 this, wsl-spawner stopped it, and its record says how; when it is not, that start ended without wsl-spawner's stop.
@@ -101,8 +121,9 @@ this, wsl-spawner stopped it, and its record says how; when it is not, that star
 WSL stops a distribution within half a minute of nothing from Windows running in it (`.wslconfig`'s
 `instanceIdleTimeout`, 15 seconds by default). `wsl-spawner set NAME --keep` adds `wsl-spawner-keepalive.service`,
 which holds Windows' `waitfor.exe` waiting for a signal no one sends: WSL keeps a distribution up while one of its
-programs runs, and ends that program with it. Windows programs must run in the distribution (`[interop]` in
-`/etc/wsl.conf`).
+programs runs, and ends that program with it. Any program on the PC can wait for or send a signal of any name, so the
+name ends with a secret made at each set-up, kept only in the service's file. Windows programs must run in the
+distribution (`[interop]` in `/etc/wsl.conf`).
 
 ## The start at sign-in
 

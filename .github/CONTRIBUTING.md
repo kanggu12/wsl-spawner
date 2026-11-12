@@ -17,7 +17,7 @@ The code sits in layers. Imports go down, never up; `internal/layers_test.go` fa
 | engine | `distros`, `inside`, `stop`, `setup`, `check`, `history` | reading the distributions, the scripts run inside one, a stop, setting up and taking out, the check, the history |
 | settings | `config` | `config.toml`, read, and written as a person wrote it |
 | machine | `wsl`, `winapi`, `gpo` | `wsl.exe`, Windows' calls, the local Group Policy's files |
-| core | `version` | the build's version |
+| core | `version`, `plain` | the build's version; text read from a distribution made safe to show |
 
 Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, and setting up
 and taking out. What goes into a script is a number or a plain word, checked before it goes in; nothing read from a

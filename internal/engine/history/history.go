@@ -56,6 +56,27 @@ type Distro struct {
 	Err string `json:"error,omitempty"`
 }
 
+// Late is the step a stop's result names: the first that ran out of time,
+// for one out of time; the first that failed otherwise, for one with a step
+// failed. False for any other result, or a stop whose steps were not kept.
+func (d Distro) Late() (Step, bool) {
+	var failed *Step
+	for i, s := range d.Steps {
+		switch {
+		case d.Result == "limit" && s.Code == 124:
+			return s, true
+		case d.Result == "failed" && s.Code != 0 && s.Code != 124:
+			return s, true
+		case d.Result == "failed" && s.Code != 0 && failed == nil:
+			failed = &d.Steps[i]
+		}
+	}
+	if failed != nil {
+		return *failed, true
+	}
+	return Step{}, false
+}
+
 // Step is one step of a stop.
 type Step struct {
 	// Step is its name: "hook", "units", "docker", "podman", "sync"; Hook

@@ -6,6 +6,8 @@ package setup
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,10 +26,28 @@ var ErrNoSystemd = errors.New("systemd does not run in it")
 //lint:ignore ST1005 "Windows" is a name, and the error is said to people as it is.
 var ErrNoInterop = errors.New("Windows programs do not run in it")
 
+// newToken is the secret a keep-running service's signal name ends with:
+// 16 random bytes in hex, made at each set-up. A variable so tests can
+// make it known.
+var newToken = realToken
+
+// realToken makes the token from the system's random numbers.
+func realToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // In sets wsl-spawner up in a running distribution: the start script and
 // its service, and the keep-running service when keep.
 func In(ctx context.Context, sys wsl.System, name string, keep bool) error {
-	return run(ctx, sys, name, inside.SetupScript(keep, inside.Signal(name)), "setting wsl-spawner up in")
+	token, err := newToken()
+	if err != nil {
+		return fmt.Errorf("setting wsl-spawner up in %s: no secret for its keep-running signal: %w", name, err)
+	}
+	return run(ctx, sys, name, inside.SetupScript(keep, inside.Signal(name, token)), "setting wsl-spawner up in")
 }
 
 // Out takes everything wsl-spawner put in a running distribution out.

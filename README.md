@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/kanggu12/wsl-spawner/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/kanggu12/wsl-spawner/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/kanggu12/wsl-spawner/releases"><img alt="Release v0.1.1" src="docs/assets/badges/release.svg"></a>
+  <a href="https://github.com/kanggu12/wsl-spawner/releases"><img alt="Release v0.1.2" src="docs/assets/badges/release.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="docs/assets/badges/license.svg"></a>
   <a href="https://github.com/kanggu12/wsl-spawner/pkgs/container/wsl-spawner-demo"><img alt="Demo image" src="docs/assets/badges/demo.svg"></a>
   <img alt="Runs on Windows 10 and 11, x64 and ARM64, with WSL 2" src="docs/assets/badges/runs-on.svg">
@@ -67,14 +67,14 @@ The first start opens a short wizard, a page for each choice, the language and c
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/setup-dark.png">
-  <img alt="The setup wizard at step 5 of 7, Distributions. Each distribution has a level, chosen with space: nothing set up, set up, kept running, or started at sign-in, each including the ones before it. Ubuntu-24.04 is set up, kept running and started at sign-in; Debian is stopped, and what is set up in it shows once it runs; Work, selected, is set up and kept running. The keys: up and down choose, space changes the level, enter goes on, left goes back, esc quits." src="docs/assets/setup-light.png">
+  <img alt="The setup wizard at step 5 of 7, Distributions. Each distribution has a level, chosen with space: stop only, set up, kept running, or started at sign-in, each including the ones before it. Ubuntu-24.04 is set up, kept running and started at sign-in; Debian is stopped, and what is set up in it shows once it runs; Work, selected, is set up and kept running. The keys: up and down choose, space changes the level, enter goes on, left goes back, q quits." src="docs/assets/setup-light.png">
 </picture>
 
 ## Why wsl-spawner
 
 - **WSL gives services seconds.** Measured on WSL 3.0.5: `wsl --terminate` ends a distribution's services after about
   10 seconds, a `systemctl poweroff` inside after about 25. A service that needs longer is cut off.
-- **Signing out is a stop too.** Windows signs out before every shutdown and restart, an update's included, and WSL
+- **Signing out is a stop too.** Windows signs out before every shutdown and restart, those an update makes too, and WSL
   goes with it. A sign-out hook is the one place to run first.
 - **`docker stop` loses the restart policy.** A container stopped one by one is marked stopped by hand, and
   `unless-stopped` no longer brings it back. Stopping Docker's daemon keeps it, so that is what wsl-spawner stops.
@@ -170,7 +170,11 @@ sign-in program when a distribution starts at sign-in, and the sign-out hook whe
 says what is there.
 
 **Does it work with Docker Desktop?** Docker Desktop's distributions are its own: wsl-spawner leaves them be and says
-so. Docker Engine inside your own distribution is what wsl-spawner stops and brings back.
+so. So is the `docker` command its WSL integration puts in your distribution: wsl-spawner stops and brings back only a
+Docker whose daemon runs in the distribution itself, Docker Engine inside it.
+
+**What about rootless Podman or Docker?** wsl-spawner works as root, with root's engines: the containers of another
+user's engine, rootless Podman's or rootless Docker's, are not seen, stopped or brought back.
 
 **What about WSL 1?** A WSL 1 distribution has no VM and no systemd, nothing to give time to: it is listed, and left be.
 

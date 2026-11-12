@@ -99,9 +99,20 @@ cat >dist/wsl-spawner.json <<EOF
             "url": "\$baseurl/checksums.txt"
         }
     },
-    "notes": "Run wsl-spawner in a new terminal, in Windows or inside WSL."
+    "notes": [
+        "Run wsl-spawner in a new terminal, in Windows or inside WSL.",
+        "Before scoop uninstall: wsl-spawner uninstall takes out its sign-out hook, sign-in program and services."
+    ]
 }
 EOF
 # A manifest Scoop could not read would fail people, not this script.
 python3 -m json.tool dist/wsl-spawner.json >/dev/null
+# Nor one with no hash to check a zip by: Scoop installs it with a warning.
+python3 - <<'PY'
+import json, re
+m = json.load(open("dist/wsl-spawner.json"))
+for arch, a in m["architecture"].items():
+    if not re.fullmatch(r"[0-9a-f]{64}", a["hash"]):
+        raise SystemExit(f"wsl-spawner.json: no checksum for the {arch} zip")
+PY
 ls -l dist

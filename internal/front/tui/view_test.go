@@ -3,11 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kanggu12/wsl-spawner/internal/engine/history"
 	"github.com/kanggu12/wsl-spawner/internal/front/api"
 	"github.com/kanggu12/wsl-spawner/internal/front/i18n"
 )
@@ -151,5 +154,156 @@ func TestTheDetailsSayAProbeReadInPart(t *testing.T) {
 	m.st.List[0].ProbeError = ""
 	if f := ansi.Strip(m.View().Content); strings.Contains(f, "read in part") {
 		t.Fatalf("%s", f)
+	}
+}
+
+// mainWith is the main screen at w by h on a made-up PC with ds, the row
+// sel selected, as a model to press keys on.
+func mainWith(w, h, sel int, ds ...api.Distro) model {
+	m := newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded, m.sel = w, h, true, sel
+	m.st = api.Status{WSL: "3.0.5.0", StopLimit: 300, Resume: "running", List: ds}
+	return m
+}
+
+func TestManyDistributionsKeepTheSelectedRowAndItsDetailsInSight(t *testing.T) {
+	// 24 distributions at 80x24, the last selected: its row is shown and
+	// lit, its details are under the table, and a line says how many rows
+	// are out of sight.
+	var ds []api.Distro
+	for i := range 24 {
+		ds = append(ds, api.Distro{Name: fmt.Sprintf("Work-%02d", i), Running: true, Kind: "stop-only", Version: 2,
+			Probe: &api.Probe{Systemd: "running", LastEnd: api.End{How: "unknown"}}})
+	}
+	for _, size := range [][2]int{{80, 24}, {60, 18}, {120, 30}} {
+		for _, sel := range []int{0, 12, 23} {
+			f := ansi.Strip(mainWith(size[0], size[1], sel, ds...).View().Content)
+			name := fmt.Sprintf("Work-%02d", sel)
+			if strings.Count(f, name) < 2 {
+				t.Errorf("%dx%d, %s selected: its row or its details are out of sight:\n%s", size[0], size[1], name, f)
+			}
+			if !strings.Contains(f, "more below") && !strings.Contains(f, "more above") {
+				t.Errorf("%dx%d, %s selected: nothing says rows are out of sight:\n%s", size[0], size[1], name, f)
+			}
+		}
+	}
+}
+
+func TestADistributionWithoutSystemdIsToldSoAndOfferedNoSetUp(t *testing.T) {
+	m := mainWith(100, 30, 0, api.Distro{Name: "Work", Running: true, Kind: "stop-only", Version: 2,
+		Probe: &api.Probe{Systemd: "", LastEnd: api.End{How: "unknown"}}})
+	f := ansi.Strip(m.View().Content)
+	if !strings.Contains(f, "systemd does not run in it") || strings.Contains(f, "Each service gets its time to stop") {
+		t.Errorf("the verdict:\n%s", f)
+	}
+	keys := lineWith(f, "select")
+	for _, k := range []string{"set up", "keep", "sign-in"} {
+		if strings.Contains(keys, k) {
+			t.Errorf("%q offered for a distribution without systemd: %q", k, keys)
+		}
+	}
+}
+
+func TestTheKeysOfferStopForOneRunningAndStartForOneStopped(t *testing.T) {
+	run := api.Distro{Name: "On", Running: true, Kind: "set-up", Version: 2, Probe: &api.Probe{Systemd: "running", SetUp: true, LastEnd: api.End{How: "unknown"}}}
+	off := api.Distro{Name: "Off", Kind: "set-up", Version: 2}
+	for sel, want := range map[int][2]string{0: {"stop", "start"}, 1: {"start", "stop"}} {
+		keys := lineWith(ansi.Strip(mainWith(120, 30, sel, run, off).View().Content), "select")
+		if !strings.Contains(keys, " "+want[0]) || strings.Contains(keys, " "+want[1]+" ") {
+			t.Errorf("row %d: %q", sel, keys)
+		}
+	}
+}
+
+func TestTheErrorScreenSaysTheWholeErrorAndHowToReadAgain(t *testing.T) {
+	err := errors.New(`asking WSL which distributions run: exec: "wsl.exe": executable file not found in %PATH%, and nothing else could be asked either`)
+	for _, w := range []int{60, 80, 120} {
+		m := mainWith(w, 24, 0)
+		m.err = err
+		f := ansi.Strip(m.View().Content)
+		// The words, wherever the lines break.
+		if !strings.Contains(strings.Join(strings.Fields(f), " "), strings.Join(strings.Fields(err.Error()), " ")) {
+			t.Errorf("%d wide: the error is cut:\n%s", w, f)
+		}
+		keys := lineWith(f, "quit")
+		if !strings.Contains(keys, "read again") || strings.Contains(keys, "select") {
+			t.Errorf("%d wide: the keys %q", w, keys)
+		}
+	}
+}
+
+func TestEscOnTheMainScreenDoesNotQuit(t *testing.T) {
+	m := mainWith(100, 30, 0, api.Distro{Name: "Work", Running: true, Kind: "set-up", Version: 2, Probe: &api.Probe{Systemd: "running", LastEnd: api.End{How: "unknown"}}})
+	if _, cmd := m.Update(snapshotKey("esc")); cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("esc quit the program from the main screen")
+		}
+	}
+	if _, cmd := m.Update(snapshotKey("q")); cmd == nil {
+		t.Fatal("q did not quit")
+	} else if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatal("q did not quit")
+	}
+}
+
+func TestTheLogoStandsInTheMiddleOfAnEmptyScreen(t *testing.T) {
+	// The block is its own width: the mark starts well in from the left,
+	// and the line under the name is whole, wrapped where it must be.
+	for _, w := range []int{80, 120} {
+		f := ansi.Strip(mainWith(w, 30, 0).View().Content)
+		mark := lineWith(f, "#")
+		if mark == "" {
+			mark = lineWith(f, "▄")
+		}
+		if lead := len(mark) - len(strings.TrimLeft(mark, " ")); lead < 8 {
+			t.Errorf("%d wide: the logo starts at column %d:\n%s", w, lead, f)
+		}
+		// The words in order, the mark's blocks beside them left out.
+		words := strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+			if strings.ContainsRune("▀▄█#", r) {
+				return ' '
+			}
+			return r
+		}, f)), " ")
+		if !strings.Contains(words, "WSL's services and containers get their time to stop, and come back") {
+			t.Errorf("%d wide: the tagline is cut:\n%s", w, f)
+		}
+	}
+}
+
+func TestAnEngineAsleepOrAnothersIsSaidQuietlyNotAsDown(t *testing.T) {
+	// A Docker stopped by hand behind its socket, or a docker whose daemon
+	// is another's, is nothing wrong: said by its own word, where "down"
+	// is for a daemon that does not answer.
+	for state, want := range map[string]string{"asleep": "docker asleep", "foreign": "docker not its own", "down": "docker down"} {
+		engines := map[string]bool{}
+		if state != "foreign" {
+			engines["docker"] = false
+		}
+		m := mainWith(120, 30, 0, api.Distro{Name: "Work", Running: true, Kind: "set-up", Version: 2,
+			Probe: &api.Probe{Systemd: "running", SetUp: true, Engines: engines, EngineStates: map[string]string{"docker": state}, LastEnd: api.End{How: "unknown"}}})
+		row := lineWith(ansi.Strip(m.View().Content), "Work ")
+		if !strings.Contains(row, want) {
+			t.Errorf("%s: %q", state, row)
+		}
+	}
+}
+
+func TestAStopAnotherStopIsStoppingIsSaidQuietly(t *testing.T) {
+	// Its result carries an error for scripts; on the screen nothing went
+	// wrong, and no ✗ says so.
+	m := mainWith(100, 30, 0)
+	r := &runState{errs: map[string]string{"Work": "another stop of Work is running"}}
+	if got := ansi.Strip(m.resultWords("Work", "busy", r)); got != "another stop is stopping it" {
+		t.Errorf("%q", got)
+	}
+}
+
+func TestTheHistoryNamesANoteThatCouldNotBeWritten(t *testing.T) {
+	if got := stepName(history.Step{Step: "record", Code: 1}); got != "notes in /var/lib/wsl-spawner, exit 1" {
+		t.Errorf("%q", got)
+	}
+	if got := stepWords(step{key: "record"}); got != "notes in /var/lib/wsl-spawner" {
+		t.Errorf("%q", got)
 	}
 }

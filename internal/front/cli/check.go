@@ -38,11 +38,11 @@ func checkCmd(p *apps) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "check",
 		Short: "Look over what stopping and starting stand on: the sign-out hook, each distribution, sign-in, WSL, ports",
-		Long: "check reads, and changes nothing: the sign-out hook and how long Windows waits for\n" +
-			"it, each running distribution's systemd, how its last start ended, its\n" +
-			"containers' stop timeouts and restart policies, the start at sign-in, WSL's own\n" +
-			"settings, and the ports Windows keeps from programs. Each finding says what to do\n" +
-			"about it. Exit code 3: something does not go as it should.",
+		Long: "check reads, and changes nothing: the sign-out hook and how long Windows waits\n" +
+			"for it, each running distribution's systemd, how its last start ended, its\n" +
+			"containers' stop timeouts and restart policies, the start at sign-in, WSL's\n" +
+			"own settings, and the ports Windows keeps from programs. Each finding says what\n" +
+			"to do about it. Exit code 3: something does not go as it should.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a, err := p.get()
@@ -125,7 +125,34 @@ func hookFindings(pc app.PC) check.Hook {
 	if err != nil {
 		return check.Hook{Err: err}
 	}
-	f := check.Hook{Installed: h.installed(), Last: h.last(), Count: len(h.Scripts), MaxWait: pc.MaxWait()}
+	f := check.Hook{Installed: h.installed(), Last: h.last(), Count: len(h.Scripts), MaxWait: pc.MaxWait(), Standard: pc.IsStandardUser()}
+	// The program a hook of wsl-spawner's starts is changed by no one else:
+	// the hook runs for every user of the PC, as whoever signs out. That of
+	// this copy, and of the copies whose program is there or gone (a gone
+	// one is as good as whoever may put one there). One that cannot be read
+	// says nothing: the check does not fail for it.
+	type program struct {
+		exe  string
+		copy bool
+	}
+	programs := []program{}
+	if h.installed() {
+		programs = append(programs, program{h.Exe, false})
+	}
+	for _, c := range h.Copies {
+		if c.There || c.Gone {
+			programs = append(programs, program{c.Exe, true})
+		}
+	}
+	// The programs said so, not said again among the scripts that stop
+	// WSL first: one finding, one way out, for each.
+	said := map[string]bool{}
+	for _, p := range programs {
+		if who, at, err := pc.OthersCanChange(p.exe); err == nil && who != "" {
+			f.Changeable = append(f.Changeable, check.Changeable{Program: p.exe, By: who, At: at, Copy: p.copy})
+			said[p.exe] = true
+		}
+	}
 	// The PowerShell sign-out scripts that run after the hook: by default,
 	// or as psscripts.ini has them; none when it has them run first, and
 	// none counted when they cannot be read.
@@ -147,11 +174,17 @@ func hookFindings(pc app.PC) check.Hook {
 			// Before this copy's hook, it stops WSL first; with none of
 			// this copy's, it is the one that runs.
 			switch {
+			case said[c.Exe]:
 			case c.There && h.installed():
 				f.StopsWSL = append(f.StopsWSL, s.CmdLine)
 			case c.There:
 				f.Copies = append(f.Copies, s.CmdLine)
 			}
+			continue
+		}
+		// Read only from a fixed disk of this PC: a share a script names is
+		// not reached for by a command that only reads.
+		if !pc.OnFixedDisk(s.CmdLine) {
 			continue
 		}
 		if b, err := pc.ReadFile(s.CmdLine); err == nil && len(b) < 1<<20 && check.StopsWSL(string(b)) {

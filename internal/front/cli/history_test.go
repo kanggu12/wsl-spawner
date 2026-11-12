@@ -52,3 +52,30 @@ func TestHistoryListsNewestFirstAndClears(t *testing.T) {
 		t.Fatalf("exit %d: %q", code, out)
 	}
 }
+
+func TestHistoryNamesTheStepAStopsResultIsAbout(t *testing.T) {
+	// The check and the docs send a person to the history for the step that
+	// ran out of time or failed: it is said after the result, a hook by its
+	// file, a failed one with its exit code; a start that failed did not
+	// start, which is not a stop.
+	at := time.Date(2026, 11, 8, 22, 41, 0, 0, time.UTC)
+	entries := []history.Entry{
+		{At: at, What: "stop", By: "signout", Distros: []history.Distro{
+			{Name: "Dev", Result: "limit", Steps: []history.Step{{Step: "hook", Hook: "10-backup", Code: 0}, {Step: "docker", Code: 124}}},
+			{Name: "Work", Result: "failed", Steps: []history.Step{{Step: "hook", Hook: "20-db", Code: 3}}},
+			{Name: "Old", Result: "limit"},
+		}},
+		{At: at.Add(time.Minute), What: "start", By: "logon", Distros: []history.Distro{{Name: "Dev", Result: "error"}}},
+	}
+	var out strings.Builder
+	writeHistory(&out, look{}, entries, true)
+	for _, want := range []string{"Dev out of time: docker", "Work a step failed: hook 20-db, exit 3", "Old out of time", "Dev did not start"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in\n%s", want, out.String())
+		}
+	}
+	// A stop whose steps were not kept says no step.
+	if strings.Contains(out.String(), "Old out of time:") {
+		t.Errorf("a step named for a stop without steps:\n%s", out.String())
+	}
+}

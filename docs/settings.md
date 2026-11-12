@@ -49,7 +49,8 @@ What a stop does first, set by you, inside the distribution:
   docker exec minecraft rcon-cli save-all flush
   ```
 
-- **`/etc/wsl-spawner/stop-units`**: systemd units to stop before the containers, one name a line, `#` for a note.
+- **`/etc/wsl-spawner/stop-units`**: systemd units to stop before the containers, one name a line, a line that starts
+  with `#` a note.
   Each gets its own `TimeoutStopSec`:
 
   ```text

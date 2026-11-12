@@ -31,8 +31,8 @@ func setCmd(p *apps) *cobra.Command {
 		Short: "Choose what wsl-spawner does with a distribution: set up in it, kept running, started at sign-in",
 		Long: "set changes what wsl-spawner does with one distribution. Each flag is a choice,\n" +
 			"on as it is (--keep) or off with =false (--keep=false):\n\n" +
-			"  --managed  wsl-spawner set up in it: a service notes each start and starts again\n" +
-			"             the containers the last stop noted\n" +
+			"  --managed  wsl-spawner set up in it: a service notes each start and starts\n" +
+			"             again the containers the last stop noted\n" +
 			"  --keep     kept running with nothing open in it: a service holds Windows'\n" +
 			"             waitfor.exe, and WSL keeps a distribution up while it runs\n" +
 			"  --logon    started when you sign in to Windows, by a sign-in program Task\n" +
@@ -119,7 +119,12 @@ func runSet(cmd *cobra.Command, a *app.App, name string, ask setup.Ask, yes, asJ
 			return err
 		}
 	}
-	if want == cur && repair == "" {
+	// A start script older than this program's is what runs as root at each
+	// start of the distribution: --managed puts the newer one, whatever else
+	// is as asked already, as check tells the person to. One from a newer
+	// version stays: it is no older one.
+	stale := ask.Managed != nil && *ask.Managed && d.Probe != nil && d.Probe.StartScriptOlder()
+	if want == cur && repair == "" && !stale {
 		fmt.Fprintln(shown, d.Name+": nothing to change")
 		return result(cur, false)
 	}
@@ -130,16 +135,20 @@ func runSet(cmd *cobra.Command, a *app.App, name string, ask setup.Ask, yes, asJ
 		return err
 	}
 	l := lookFor(out)
-	inside := setup.Inside(cur, want)
+	touches := setup.Inside(cur, want) || stale
 	if !asked {
 		fmt.Fprintln(shown, "For "+d.Name+":")
-		for _, line := range append(changeWords(cur, want), repair) {
+		words := changeWords(cur, want)
+		if stale {
+			words = append(words, "put wsl-spawner's newer start script in it: the one in it is from an older version")
+		}
+		for _, line := range append(words, repair) {
 			// A choice that changes needs no repair line: its own says it.
 			if line != "" {
 				fmt.Fprintln(shown, "  "+line)
 			}
 		}
-		if inside && !d.Running {
+		if touches && !d.Running {
 			fmt.Fprintln(shown, l.muted("It is not running: it starts first."))
 		}
 		if err := needAnswer(yes, "change it"); err != nil {
@@ -151,7 +160,7 @@ func runSet(cmd *cobra.Command, a *app.App, name string, ask setup.Ask, yes, asJ
 			}
 		}
 	}
-	if inside {
+	if touches {
 		if !d.Running {
 			if err := a.WSL.Start(ctx, d.Name); err != nil {
 				return fmt.Errorf("starting %s: %w", d.Name, err)

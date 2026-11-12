@@ -406,3 +406,31 @@ func TestWithHookSaysWhyItLeavesAFile(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestAProgramWithABlankInItsPathIsWrittenInQuotes(t *testing.T) {
+	// A user named Ann Lee has the program in C:\Users\Ann Lee\...: written
+	// bare, Windows reads it as the program C:\Users\Ann.exe, or runs
+	// nothing, and the hook would never stop anything. In quotes it is the
+	// program, and reads back as the path it is.
+	spaced := `C:\Users\Ann Lee\AppData\Local\Programs\wsl-spawner\wsl-spawnerw.exe`
+	out := Add(editors, spaced, "logoff")
+	if !strings.Contains(out, "2CmdLine=\""+spaced+"\"\r\n2Parameters=logoff\r\n") {
+		t.Fatalf("%q", out)
+	}
+	got := Logoff(out)
+	if len(got) != 3 || got[2] != (Script{2, spaced, "logoff"}) || !Ours(got[2], spaced) {
+		t.Fatalf("%+v", got)
+	}
+	// Once there, once: added again it is moved, not made twice, and taken
+	// out it is gone, whatever case the path is spelled in.
+	if again := Logoff(Add(out, strings.ToUpper(spaced), "logoff")); len(again) != 3 {
+		t.Fatalf("%+v", again)
+	}
+	if rest := Logoff(Remove(out, spaced)); len(rest) != 2 {
+		t.Fatalf("%+v", rest)
+	}
+	// A path with no blank is written as it always was, bare.
+	if bare := Add(editors, exe, "logoff"); !strings.Contains(bare, "2CmdLine="+exe+"\r\n") {
+		t.Fatalf("%q", bare)
+	}
+}

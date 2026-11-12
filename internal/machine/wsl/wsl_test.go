@@ -1,6 +1,7 @@
 package wsl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -191,5 +192,27 @@ func TestACallThatRanOutOfTimeIsNoAnswer(t *testing.T) {
 	}
 	if names, err := runningNames("", errors.New("exit status 1"), "Dev\n", nil); err != nil || len(names) != 0 {
 		t.Fatalf("%v %v", names, err)
+	}
+}
+
+func TestOutputIsKeptOnlyUpToItsLimit(t *testing.T) {
+	// A distribution that says more than it should: the first part is kept,
+	// the rest is taken without keeping it, and the writer is never told off.
+	var c capped
+	chunk := bytes.Repeat([]byte("x"), 1<<20)
+	for range 10 {
+		if n, err := c.Write(chunk); n != len(chunk) || err != nil {
+			t.Fatalf("write: %d %v", n, err)
+		}
+	}
+	if got := len(c.Bytes()); got != maxOutput {
+		t.Fatalf("kept %d bytes, want %d", got, maxOutput)
+	}
+	// Short of the limit, everything is kept as written.
+	var d capped
+	d.Write([]byte("probe=1\n"))
+	d.Write([]byte("end=1\n"))
+	if string(d.Bytes()) != "probe=1\nend=1\n" {
+		t.Fatalf("%q", d.Bytes())
 	}
 }

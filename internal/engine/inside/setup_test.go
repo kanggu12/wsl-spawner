@@ -48,10 +48,11 @@ func setupTools(t *testing.T) string {
 	return dir
 }
 
-func TestSetUpWritesTheServicesAndNotesThisStart(t *testing.T) {
+func TestSetUpWritesTheServicesAndStartsTheStartService(t *testing.T) {
 	root, dir := distro(t), setupTools(t)
 	asked := systemdStub(t, dir)
-	out, err := runAt(t, dir, root, SetupScript(true, Signal("Ubuntu-24.04")))
+	signal := Signal("Ubuntu-24.04", "00ff")
+	out, err := runAt(t, dir, root, SetupScript(true, signal))
 	if e, ok := SetupError(out); err != nil || !ok || e != "" {
 		t.Fatalf("%v %q\n%s", err, e, out)
 	}
@@ -63,16 +64,14 @@ func TestSetUpWritesTheServicesAndNotesThisStart(t *testing.T) {
 		t.Fatalf("start unit %q", got)
 	}
 	keep := read(t, root, KeepAlivePath)
-	if !strings.Contains(keep, "\nExecStart=/mnt/c/Windows/System32/waitfor.exe "+Signal("Ubuntu-24.04")+"\n") {
+	if !strings.Contains(keep, "\nExecStart=/mnt/c/Windows/System32/waitfor.exe "+signal+"\n") {
 		t.Fatalf("keep-running unit:\n%s", keep)
 	}
-	if got := lines(t, asked); !slices.Equal(got, []string{"daemon-reload", "enable --quiet " + StartUnit, "enable --quiet --now " + KeepAliveUnit}) {
+	// The start service runs the start script for this start, as at each
+	// boot: it notes this start, and brings back what the last stop noted.
+	want := []string{"is-active " + KeepAliveUnit, "daemon-reload", "enable --quiet " + StartUnit, "enable --quiet --now " + KeepAliveUnit, "start --no-block " + StartUnit}
+	if got := lines(t, asked); !slices.Equal(got, want) {
 		t.Fatalf("systemctl asked %q", got)
-	}
-	// This start is noted, as the probe names it.
-	runs := lines(t, filepath.Join(root, "var/lib/wsl-spawner/runs"))
-	if len(runs) != 1 || !strings.HasSuffix(runs[0], " 0f0e0d0c-0b0a-4908-8706-050403020100@4242") {
-		t.Fatalf("runs %q", runs)
 	}
 	// The person's folders are there for them.
 	if _, err := os.Stat(filepath.Join(root, "etc/wsl-spawner/pre-stop.d")); err != nil {
@@ -92,12 +91,72 @@ func TestSetUpWithoutKeepingRunningTakesThatServiceOut(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, KeepAlivePath)); !os.IsNotExist(err) {
 		t.Fatal("the keep-running service stayed")
 	}
-	if got := lines(t, asked); !slices.Contains(got, "disable --quiet --now "+KeepAliveUnit) {
+	got := lines(t, asked)
+	if !slices.Contains(got, "disable --quiet --now "+KeepAliveUnit) {
 		t.Fatalf("systemctl asked %q", got)
 	}
-	// Set up twice in one start, the start is noted once.
+	// Each set-up starts the start service, which notes a start once.
+	n := 0
+	for _, c := range got {
+		if c == "start --no-block "+StartUnit {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("systemctl asked %q", got)
+	}
+}
+
+func TestSetUpStartsTheStartServiceAndDoesNotWaitForIt(t *testing.T) {
+	// The start script may wait a minute for an engine still starting, and
+	// what it asks the engines has no limit of its own: run inside the
+	// set-up, it outlived the minute wsl.exe's call gives the set-up, which
+	// set then said was WSL not answering, and no sign-in program was made.
+	// The set-up starts the service, and does not wait for it.
+	root, dir := distro(t), setupTools(t)
+	if err := os.MkdirAll(filepath.Join(root, "var/lib/wsl-spawner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "var/lib/wsl-spawner/resume"), []byte("docker bbb db\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sysAsked := systemdStub(t, dir)
+	// Docker notes each question it is asked.
+	dockAsked := filepath.Join(dir, "docker.asked")
+	shtest.Stub(t, dir, "docker", `printf '%s\n' "$*" >>'`+dockAsked+`'`)
+	out, err := runAt(t, dir, root, SetupScript(false, "x"))
+	if _, ok := SetupError(out); err != nil || !ok {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := lines(t, sysAsked); !slices.Contains(got, "start --no-block "+StartUnit) {
+		t.Fatalf("systemctl asked %q", got)
+	}
+	if got := lines(t, dockAsked); got != nil {
+		t.Fatalf("the set-up asked docker %q", got)
+	}
+}
+
+func TestWhereSystemdDoesNotTakeTheStartTheSetUpRunsItWithinALimit(t *testing.T) {
+	// systemd refuses the start job: the script runs in the set-up as
+	// before, given 40 s, well inside the minute wsl.exe's call gives the
+	// set-up, and the start is noted.
+	root, dir := distro(t), setupTools(t)
+	asked := filepath.Join(dir, "systemctl.asked")
+	shtest.Stub(t, dir, "systemctl", `printf '%s\n' "$*" >>'`+asked+`'
+case "$1" in start) echo 'Failed to start wsl-spawner.service' >&2; exit 1 ;; is-active) echo inactive; exit 3 ;; esac`)
+	// A timeout that notes the limit it is given, then runs the command.
+	limits := filepath.Join(dir, "limits")
+	shtest.Stub(t, dir, "timeout", `printf '%s\n' "$1" >>'`+limits+`'; shift; exec "$@"`)
+	out, err := runAt(t, dir, root, SetupScript(false, "x"))
+	if _, ok := SetupError(out); err != nil || !ok {
+		t.Fatalf("%v\n%s", err, out)
+	}
 	if runs := lines(t, filepath.Join(root, "var/lib/wsl-spawner/runs")); len(runs) != 1 {
-		t.Fatalf("runs %q", runs)
+		t.Fatalf("runs %q\n%s", runs, out)
+	}
+	// BusyBox's sh runs its own timeout, never one on the PATH.
+	if got := lines(t, limits); !shIsBusyBox(t) && !slices.Equal(got, []string{"40"}) {
+		t.Fatalf("timeout given %q", got)
 	}
 }
 
@@ -370,10 +429,11 @@ func TestTheScriptsPickNoTextApartWithTools(t *testing.T) {
 }
 
 func TestSignal(t *testing.T) {
-	// Letters and digits only, and names that differ only in the rest stay
-	// apart.
-	a, b := Signal("Ubuntu-24.04"), Signal("Ubuntu2404")
-	if a == b || !strings.HasPrefix(a, "WslSpawnerKeepUbuntu2404") || strings.ContainsAny(a, "-._") {
+	// Letters and digits only, and ending with the token: two set-ups of one
+	// distribution name different signals, so the name cannot be worked out
+	// from the distribution's.
+	a, b := Signal("Ubuntu-24.04", "00ff"), Signal("Ubuntu-24.04", "11ee")
+	if a == b || !strings.HasPrefix(a, "WslSpawnerKeepUbuntu2404") || !strings.HasSuffix(a, "00ff") || strings.ContainsAny(a, "-._") {
 		t.Fatalf("%q %q", a, b)
 	}
 }
@@ -420,6 +480,119 @@ esac`)
 	}
 }
 
+func TestTwoStartScriptsAtOnceBringEachContainerBackOnce(t *testing.T) {
+	// The service at a boot a set-up caused, and a run by hand or the
+	// set-up's own: both read the list, and each container was started
+	// twice and listed twice. One run at a time: the second leaves it to
+	// the first. Docker answers slowly, so the two would meet.
+	for way, tools := range lockWays(t) {
+		files := proc("systemd")
+		files["var/lib/wsl-spawner/resume"] = "docker aa11 web\ndocker bb22 db\n"
+		root := tree(t, files)
+		dir := shtest.Tools(t, append(tools, "rm", "date", "ln")...)
+		// Each start the engine is asked for is noted.
+		asked := filepath.Join(dir, "asked")
+		shtest.Stub(t, dir, "docker", `case "$1" in
+info) sleep 1 ;;
+inspect) echo false ;;
+start) printf '%s\n' "$2" >>'`+asked+`' ;;
+esac`)
+		// Two at once, each in its own goroutine; what each printed comes
+		// back.
+		outs := make(chan string, 2)
+		for range 2 {
+			go func() {
+				out, _ := shtest.Run(t, dir, "R='"+root+"'\n"+startScript)
+				outs <- out
+			}()
+		}
+		out := <-outs + <-outs
+		if got := lines(t, asked); !slices.Equal(got, []string{"aa11", "bb22"}) {
+			t.Errorf("%s: docker started %q\n%s", way, got, out)
+		}
+		got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resumed"))
+		if len(got) != 3 || got[1] != "docker aa11 web exited" || got[2] != "docker bb22 db exited" {
+			t.Errorf("%s: resumed %q\n%s", way, got, out)
+		}
+		// The start is noted once.
+		if runs := lines(t, filepath.Join(root, "var/lib/wsl-spawner/runs")); len(runs) != 1 {
+			t.Errorf("%s: runs %q", way, runs)
+		}
+	}
+}
+
+func TestAContainerAStartBringsBackHoldsNoStartLock(t *testing.T) {
+	// Podman's start leaves a program of its own watching the container,
+	// as long as the container runs: it is not handed the lock, or no
+	// start would run again until the container ends.
+	for way, tools := range lockWays(t) {
+		files := proc("systemd")
+		files["var/lib/wsl-spawner/resume"] = "podman dd44 cache\n"
+		root := tree(t, files)
+		dir := shtest.Tools(t, append(tools, "rm", "date")...)
+		// Its start leaves a program running, its output closed so the
+		// test does not wait for it; it ends by itself a moment later.
+		shtest.Stub(t, dir, "podman", `case "$1" in info) ;; inspect) echo false ;; start) sleep 3 >/dev/null 2>&1 & ;; esac`)
+		if out, err := runAt(t, dir, root, startScript); err != nil {
+			t.Fatalf("%s: %v\n%s", way, err, out)
+		}
+		// A start right after runs: it notes its look at what came back.
+		if err := os.WriteFile(filepath.Join(root, "var/lib/wsl-spawner/resume"), []byte("podman dd44 cache\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(root, "var/lib/wsl-spawner/resumed")); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runAt(t, dir, root, startScript)
+		if got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resumed")); err != nil || len(got) != 2 {
+			t.Errorf("%s: resumed %q %v\n%s", way, got, err, out)
+		}
+	}
+}
+
+func TestTheStartScriptRunsFromTheRoot(t *testing.T) {
+	// Run by hand or by the set-up through wsl.exe, it would start in
+	// Windows' own folder: the engines it runs start from the root, here
+	// the made-up one; the test runs from this package's folder.
+	files := proc("systemd")
+	files["var/lib/wsl-spawner/resume"] = "docker aaa web\n"
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mkdir", "mv", "rm", "date")
+	// The engine notes the folder it was started in as it starts the
+	// container.
+	where := filepath.Join(dir, "where")
+	shtest.Stub(t, dir, "docker", `case "$1" in info) ;; inspect) echo false ;; start) pwd -P >>'`+where+`' ;; esac`)
+	if out, err := runAt(t, dir, root, startScript); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The made-up root as the system names it, links followed.
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lines(t, where); !slices.Equal(got, []string{want}) {
+		t.Fatalf("docker started in %q, not %q", got, want)
+	}
+}
+
+func TestTheStartScriptBringsBackWhatItCanWhereANoteCannotBeMade(t *testing.T) {
+	// A note of its own that cannot be made (a file system gone read-only;
+	// here a folder stands in its place) does not end the script before it
+	// starts anything, as the shell ends a script whose : cannot redirect.
+	files := proc("systemd")
+	files["var/lib/wsl-spawner/resume"] = "docker bbb db\n"
+	files["var/lib/wsl-spawner/resume.left/"] = ""
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mkdir", "mv", "rm", "date")
+	// What the engine is asked to start is noted here.
+	asked := filepath.Join(dir, "asked")
+	shtest.Stub(t, dir, "docker", `case "$1" in info) ;; inspect) echo false ;; start) printf '%s\n' "$*" >>'`+asked+`' ;; esac`)
+	out, _ := runAt(t, dir, root, startScript)
+	if got := lines(t, asked); !slices.Equal(got, []string{"start bbb"}) {
+		t.Fatalf("docker asked %q\n%s", got, out)
+	}
+}
+
 func TestTheStartScriptRunsOnlyTheTwoEngines(t *testing.T) {
 	// A line of the list naming anything else is not run: each first word
 	// would run as root.
@@ -439,5 +612,60 @@ func TestTheStartScriptRunsOnlyTheTwoEngines(t *testing.T) {
 	got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resumed"))
 	if len(got) != 2 || got[1] != "docker aaa web running" {
 		t.Fatalf("resumed %q", got)
+	}
+}
+
+func TestTheStartScriptHandsAnEngineOnlyIds(t *testing.T) {
+	// The list is a file of root's: still, what it names as an id goes to the
+	// engine as an argument, and `--latest` or `-f` would be an option. Only
+	// an id, which is hex, is handed over.
+	files := proc("systemd")
+	files["var/lib/wsl-spawner/resume"] = "podman --latest x\ndocker -f y\ndocker ABC upper\ndocker aaa web\n"
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mkdir", "mv", "rm", "date", "sleep")
+	asked := filepath.Join(dir, "asked")
+	shtest.Stub(t, dir, "docker", `echo "docker $*" >>'`+asked+`'
+case "$1" in info) ;; inspect) echo true ;; *) exit 64 ;; esac`)
+	shtest.Stub(t, dir, "podman", `echo "podman $*" >>'`+asked+`'; exit 0`)
+	if out, err := runAt(t, dir, root, startScript); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := strings.Join(lines(t, asked), "\n")
+	if strings.Contains(got, "--latest") || strings.Contains(got, " -f") || strings.Contains(got, "ABC") || strings.Contains(got, "podman") {
+		t.Fatalf("an engine was handed what is not an id:\n%s", got)
+	}
+	if !strings.Contains(got, "docker inspect --format {{.State.Running}} aaa") {
+		t.Fatalf("the id was not asked about:\n%s", got)
+	}
+}
+
+func TestASetUpRestartsAKeepRunningServiceThatRunsForItsNewSignal(t *testing.T) {
+	// The service that runs holds the signal of the file it had: set up
+	// again, with a new signal in the file, it is started again, so the
+	// name that is waited for is the new one. One that did not run is only
+	// started, once.
+	for _, tc := range []struct {
+		name, active string
+		restarts     bool
+	}{
+		{"running", "active", true},
+		{"not running", "inactive", false},
+		// A first set-up: the service is not there at all.
+		{"not there", "not-found", false},
+	} {
+		root, dir := distro(t), setupTools(t)
+		asked := filepath.Join(dir, "systemctl.asked")
+		// As the real one: 3 for a unit that does not run, 4 for one that is
+		// not there yet (a first set-up), 0 for one that runs.
+		code := map[string]string{"active": "0", "inactive": "3", "not-found": "4"}[tc.active]
+		shtest.Stub(t, dir, "systemctl", `case "$1" in is-active) echo `+tc.active+`; exit `+code+` ;; esac
+printf '%s\n' "$*" >>'`+asked+`'`)
+		if out, err := runAt(t, dir, root, SetupScript(true, Signal("Ubuntu-24.04", "00ff"))); err != nil || !strings.Contains(out, "ok=1") {
+			t.Fatalf("%s: %v\n%s", tc.name, err, out)
+		}
+		got := lines(t, asked)
+		if slices.Contains(got, "restart "+KeepAliveUnit) != tc.restarts {
+			t.Errorf("%s: systemctl asked %q", tc.name, got)
+		}
 	}
 }

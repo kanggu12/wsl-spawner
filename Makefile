@@ -33,6 +33,8 @@ lint:
 	$$(go env GOPATH)/bin/staticcheck $(PKGS)
 	GOOS=windows $$(go env GOPATH)/bin/staticcheck $(PKGS)
 	shellcheck scripts/*.sh .github/wsl/*.sh .github/wsl/10-mark
+# The scripts that run inside a distribution have no first line to say they are sh.
+	shellcheck -s sh internal/engine/inside/*.sh
 
 test:
 	go test -race -count=1 $(PKGS)

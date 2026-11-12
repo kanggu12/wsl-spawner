@@ -195,3 +195,46 @@ func TestTheWizardSaysItsStepsPlainly(t *testing.T) {
 		t.Errorf("the settings line in\n%s", plain)
 	}
 }
+
+func TestEscGoesBackAPageInTheWizard(t *testing.T) {
+	// From the colors page, esc goes back to the language: the choices so
+	// far stay, as with ← and backspace; q is what leaves.
+	f, _ := wizardOn(t, "en", 100, 30, wizardPages["colors"]+" esc")
+	if !strings.Contains(ansi.Strip(f), "2 of 7 · Language") {
+		t.Errorf("esc from the colors page:\n%s", ansi.Strip(f))
+	}
+}
+
+func TestTheColorsPreviewLeavesTheWizardInTheTerminalsColors(t *testing.T) {
+	// On a dark terminal, light chosen: the question and the choices stay
+	// in the dark theme's ink, which the terminal shows; the light colors
+	// show on the preview's own row, on a light background.
+	f, _ := wizardOn(t, "en", 120, 30, wizardPages["colors"]+" down down")
+	darkInk := "38;2;236;235;242"
+	q := ""
+	for _, l := range strings.Split(f, "\n") {
+		if strings.Contains(ansi.Strip(l), "Which colors?") {
+			q = l
+		}
+	}
+	if !strings.Contains(q, darkInk) {
+		t.Errorf("the question is not in the terminal's ink: %q", q)
+	}
+	if !strings.Contains(f, "48;2;255;255;255") {
+		t.Errorf("no light background behind the preview of light colors")
+	}
+}
+
+func TestTheHookPageSaysAnInstalledHookAndTheEndSaysDone(t *testing.T) {
+	// The demo's hook is installed: the page says so, and asks nothing.
+	f, _ := wizardOn(t, "en", 120, 30, wizardPages["hook"])
+	plain := ansi.Strip(f)
+	if strings.Contains(plain, "Install the sign-out hook?") || !strings.Contains(plain, "The sign-out hook is in") {
+		t.Errorf("the hook page:\n%s", plain)
+	}
+	// After the changes, the last page is done, not a confirmation.
+	f, _ = wizardOn(t, "en", 120, 30, wizardPages["applied"])
+	if plain := ansi.Strip(f); !strings.Contains(plain, "7 of 7 · Done") {
+		t.Errorf("the last page:\n%s", plain)
+	}
+}

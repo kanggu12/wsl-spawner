@@ -701,3 +701,257 @@ func TestLogoffStopsEverythingThenWSL(t *testing.T) {
 		t.Fatalf("%+v", all)
 	}
 }
+
+func TestTheHookIsRefusedForAProgramAnotherUserCanChange(t *testing.T) {
+	// The hook is in a policy for every user of the PC and runs as whoever
+	// signs out: a program that Users may change is every user's to run as
+	// every other. Refused before a question or an administrator, and nothing
+	// changes; the same in the copy started as an administrator.
+	a, _ := pc(t)
+	p := newPolicy(t, a, another, false)
+	a.PC.WhoElseCanChange = func(path string, trustUser bool) (string, string, error) {
+		return `BUILTIN\Users`, `C:\Tools`, nil
+	}
+	_, errOut, code := cli(t, a, false, "hook", "install", "--yes")
+	// Who can change what, then, after a semicolon, what to do: one line
+	// with no brackets in brackets.
+	want := `wsl-spawner: BUILTIN\Users can change C:\Tools, which holds wsl-spawnerw.exe, and the sign-out hook runs it for every user of this PC, as whoever signs out; ` +
+		"install wsl-spawner in a folder only you and administrators can write to, as its install script does, or take that permission away, then run this again\n"
+	if code != exitFail || errOut != want {
+		t.Fatalf("exit %d: %q", code, errOut)
+	}
+	if p.elevatedArgs != nil || len(gpo.Logoff(p.text)) != 1 {
+		t.Fatalf("something changed: elevated %q, %+v", p.elevatedArgs, gpo.Logoff(p.text))
+	}
+	// The administrator's copy refuses as well, whoever started it.
+	a2, _ := pc(t)
+	p2 := newPolicy(t, a2, another, true)
+	a2.PC.WhoElseCanChange = a.PC.WhoElseCanChange
+	if _, errOut, code := cli(t, a2, false, "hook", "install", "--yes"); code != exitFail || !strings.Contains(errOut, "can change") || len(gpo.Logoff(p2.text)) != 1 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	// Who may change it unknown: no hook on a guess.
+	a3, _ := pc(t)
+	newPolicy(t, a3, another, false)
+	a3.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return "", "", errors.New("access denied") }
+	if _, errOut, code := cli(t, a3, false, "hook", "install", "--yes"); code != exitFail || !strings.Contains(errOut, "could not tell who may change") {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	// Removing it is not refused: whoever can change the program, the hook
+	// must be possible to take out.
+	a4, _ := pc(t)
+	p4 := newPolicy(t, a4, "[Logoff]\r\n0CmdLine=C:\\Tools\\wsl-spawnerw.exe\r\n0Parameters=logoff\r\n", true)
+	a4.PC.WhoElseCanChange = a.PC.WhoElseCanChange
+	if _, errOut, code := cli(t, a4, false, "hook", "remove", "--yes"); code != exitOK || len(gpo.Logoff(p4.text)) != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+}
+
+func TestTheAdministratorsCopySaysWhatToDoOnALineOfItsOwn(t *testing.T) {
+	// The copy Windows starts as an administrator checks again for itself,
+	// and finds what the one that asked did not: someone else may change
+	// the program by now. It writes what went wrong and what to do on lines
+	// of their own; the one that asked says them as its own, plain the hint
+	// after a semicolon, not in brackets inside brackets.
+	a, _ := pc(t)
+	p := newPolicy(t, a, another, false)
+	a.PC.WhoElseCanChange = func(path string, _ bool) (string, string, error) {
+		if p.admin {
+			return `BUILTIN\Users`, path, nil
+		}
+		return "", "", nil
+	}
+	_, errOut, code := cli(t, a, false, "hook", "install", "--yes")
+	want := `wsl-spawner: the hook was not changed: BUILTIN\Users can change C:\Tools\wsl-spawnerw.exe, and the sign-out hook runs it for every user of this PC, as whoever signs out; ` +
+		"install wsl-spawner in a folder only you and administrators can write to, as its install script does, or take that permission away, then run this again\n"
+	if code != exitFail || errOut != want || p.text != another || p.elevatedArgs == nil {
+		t.Fatalf("exit %d: %q", code, errOut)
+	}
+}
+
+func TestTheCheckSaysAHookWhoseProgramAnotherUserCanChange(t *testing.T) {
+	a, _ := pc(t)
+	checkPC(t, a, "[Logoff]\r\n0CmdLine=C:\\Tools\\wsl-spawnerw.exe\r\n0Parameters=logoff\r\n")
+	out, _, code := cli(t, a, false, "check")
+	if code != exitOK || strings.Contains(out, "may change") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	a.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return `BUILTIN\Users`, `C:\Tools\wsl-spawnerw.exe`, nil }
+	out, _, code = cli(t, a, false, "check")
+	// The program named once, and the way out this copy's own.
+	if code != exitAttention || !strings.Contains(out, `✗ BUILTIN\Users can change C:\Tools\wsl-spawnerw.exe, and the sign-out hook runs it for every user of this PC, as whoever signs out`) ||
+		!strings.Contains(out, "→ install wsl-spawner in a folder only you and administrators can write to") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	// By a folder that holds it: the folder, then the program.
+	a.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return `BUILTIN\Users`, `C:\Tools`, nil }
+	out, _, _ = cli(t, a, false, "check")
+	if !strings.Contains(out, `✗ BUILTIN\Users can change C:\Tools, which holds C:\Tools\wsl-spawnerw.exe, and the sign-out hook`) {
+		t.Fatalf("%s", out)
+	}
+	// A standard user: an administrator's way out, not a folder of their
+	// own, which hook install refuses them.
+	a.PC.StandardUser = func() bool { return true }
+	out, _, _ = cli(t, a, false, "check")
+	if !strings.Contains(out, "→ an administrator can take it out in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff, and install wsl-spawner under Program Files") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestTheCheckSaysAnotherCopysChangeableHookOnceWithThatCopysWayOut(t *testing.T) {
+	// An older copy, in a folder every user may write, has its hook before
+	// this copy's: said once, as a program others can change, with that
+	// copy's own remove for the way out; not again as a script that stops
+	// WSL first, and not with this copy's hook install, which would change
+	// nothing.
+	a, _ := pc(t)
+	checkPC(t, a, "[Logoff]\r\n0CmdLine=C:\\Old\\wsl-spawnerw.exe\r\n0Parameters=logoff\r\n1CmdLine=C:\\Tools\\wsl-spawnerw.exe\r\n1Parameters=logoff\r\n")
+	a.PC.LookAt = func(string) error { return nil }
+	a.PC.WhoElseCanChange = func(path string, _ bool) (string, string, error) {
+		if strings.HasPrefix(path, `C:\Old`) {
+			return `NT AUTHORITY\Authenticated Users`, `C:\Old`, nil
+		}
+		return "", "", nil
+	}
+	out, _, code := cli(t, a, false, "check")
+	if code != exitAttention || strings.Count(out, `C:\Old\wsl-spawnerw.exe`) != 1 || strings.Contains(out, "stops WSL before") ||
+		!strings.Contains(out, "→ that copy's own wsl-spawner hook remove takes it out, or an administrator in gpedit.msc") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+}
+
+func TestAStandardUserIsNotTrustedWithTheirOwnFolder(t *testing.T) {
+	// A standard user changes the policy with an administrator's name and
+	// password: the program they can change would run as that administrator.
+	// Their own place is not one to trust, and the words say what to do.
+	a, _ := pc(t)
+	newPolicy(t, a, another, false)
+	var trusted []bool
+	a.PC.WhoElseCanChange = func(path string, trustUser bool) (string, string, error) {
+		trusted = append(trusted, trustUser)
+		if trustUser {
+			return "", "", nil
+		}
+		return `PC\ann`, path, nil
+	}
+	// An administrator, with consent: the person's own place is trusted.
+	if _, errOut, code := cli(t, a, false, "hook", "install", "--yes"); code != exitOK {
+		t.Fatalf("an administrator: exit %d: %s", code, errOut)
+	}
+	if len(trusted) == 0 || slices.Contains(trusted, false) {
+		t.Fatalf("trusted %v", trusted)
+	}
+	// A standard user: not.
+	b, _ := pc(t)
+	p := newPolicy(t, b, another, false)
+	b.PC.StandardUser = func() bool { return true }
+	b.PC.WhoElseCanChange = a.PC.WhoElseCanChange
+	trusted = nil
+	_, errOut, code := cli(t, b, false, "hook", "install", "--yes")
+	if code != exitFail || !strings.Contains(errOut, `PC\ann can change C:\Tools\wsl-spawnerw.exe, and the sign-out hook`) || !strings.Contains(errOut, "; an administrator can install wsl-spawner under Program Files and its sign-out hook from there") {
+		t.Fatalf("a standard user: exit %d: %s", code, errOut)
+	}
+	if slices.Contains(trusted, true) || p.elevatedArgs != nil || len(gpo.Logoff(p.text)) != 1 {
+		t.Fatalf("trusted %v, elevated %q, %+v", trusted, p.elevatedArgs, gpo.Logoff(p.text))
+	}
+}
+
+func TestTheCheckSaysEachProgramAHookStartsThatAnotherUserCanChange(t *testing.T) {
+	// This copy's, another copy's that is there, and one whose program is
+	// gone from a folder anyone may put a file in.
+	a, _ := pc(t)
+	const (
+		secondCopy = `E:\second\wsl-spawnerw.exe`
+		oldCopy    = `D:\old\wsl-spawnerw.exe`
+	)
+	checkPC(t, a, "[Logoff]\r\n0CmdLine="+secondCopy+"\r\n0Parameters=logoff\r\n1CmdLine="+oldCopy+"\r\n1Parameters=logoff\r\n2CmdLine=C:\\Tools\\wsl-spawnerw.exe\r\n2Parameters=logoff\r\n")
+	a.PC.LookAt = func(p string) error {
+		if p == oldCopy {
+			return fs.ErrNotExist
+		}
+		return nil
+	}
+	a.PC.FixedDisk = func(string) bool { return true }
+	a.PC.WhoElseCanChange = func(path string, _ bool) (string, string, error) { return `BUILTIN\Users`, path, nil }
+	out, _, code := cli(t, a, false, "check")
+	if code != exitAttention {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	for _, p := range []string{`C:\Tools\wsl-spawnerw.exe`, secondCopy, oldCopy} {
+		if !strings.Contains(out, "✗ BUILTIN\\Users can change "+p+", and the sign-out hook runs it for every user of this PC") {
+			t.Errorf("no finding for %s in\n%s", p, out)
+		}
+	}
+}
+
+func TestAReadOnlyCommandDoesNotReachForAShareASignOutScriptNames(t *testing.T) {
+	// A sign-out script named on a share: looking at its program, or reading
+	// the script, would contact that host, from `check` and `hook status`,
+	// which only read, and the docs say make no network connection.
+	a, _ := pc(t)
+	const share = `\\host\share\wsl-spawnerw.exe`
+	const script = `\\host\share\old-hook.cmd`
+	checkPC(t, a, "[Logoff]\r\n0CmdLine="+share+"\r\n0Parameters=logoff\r\n1CmdLine="+script+"\r\n1Parameters=\r\n")
+	a.PC.FixedDisk = func(p string) bool { return !strings.HasPrefix(p, `\\`) }
+	var touched []string
+	a.PC.LookAt = func(p string) error { touched = append(touched, p); return nil }
+	a.PC.ReadFile = func(p string) ([]byte, error) { touched = append(touched, p); return nil, fs.ErrNotExist }
+	for _, args := range [][]string{{"check"}, {"hook", "status"}, {"hook", "status", "--json"}} {
+		touched = nil
+		cli(t, a, false, args...)
+		for _, p := range touched {
+			if strings.HasPrefix(p, `\\`) {
+				t.Errorf("%v touched %s", args, p)
+			}
+		}
+	}
+}
+
+func TestAStandardUserDoesNotElevateAProgramTheyCanChange(t *testing.T) {
+	// Removing the hook, or uninstalling, has Windows start the program as an
+	// administrator, whose own name and password a standard user types: the
+	// program the user can change, swapped by whatever runs as them, would
+	// get them. Refused before the question to Windows, with the way out.
+	const run = `C:\Tools\wsl-spawnerw.exe`
+	installedHook := "[Logoff]\r\n0CmdLine=" + run + "\r\n0Parameters=logoff\r\n"
+	a, _ := pc(t)
+	p := newPolicy(t, a, installedHook, false)
+	a.PC.StandardUser = func() bool { return true }
+	a.PC.WhoElseCanChange = func(path string, trustUser bool) (string, string, error) {
+		if trustUser {
+			return "", "", nil
+		}
+		return `PC\ann`, path, nil
+	}
+	_, errOut, code := cli(t, a, false, "hook", "remove", "--yes")
+	// The way out is the editor: an administrator's own copy takes out
+	// its own hook only, and this one is what must not run as one.
+	if code != exitFail || !strings.Contains(errOut, `PC\ann can change `+run+", and Windows would run it with the administrator's rights you give it") ||
+		!strings.Contains(errOut, "; an administrator can take it out in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff") {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	// Said before the question, not after a yes: nothing the answer
+	// changes.
+	out, errOut, code := cliWithInput(t, a, "y\n", "hook", "remove")
+	if code != exitFail || strings.Contains(out+errOut, "[y/N]") || !strings.Contains(errOut, "can change") {
+		t.Fatalf("exit %d: %s%s", code, out, errOut)
+	}
+	if p.elevatedArgs != nil || len(gpo.Logoff(p.text)) != 1 {
+		t.Fatalf("something was asked or changed: elevated %q, %+v", p.elevatedArgs, gpo.Logoff(p.text))
+	}
+	// Where only administrators can change it, the standard user may ask.
+	b, _ := pc(t)
+	p2 := newPolicy(t, b, installedHook, false)
+	b.PC.StandardUser = func() bool { return true }
+	b.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return "", "", nil }
+	if _, errOut, code := cli(t, b, false, "hook", "remove", "--yes"); code != exitOK || p2.elevatedArgs == nil {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	// An administrator asking with consent is no way in: not refused.
+	c, _ := pc(t)
+	p3 := newPolicy(t, c, installedHook, false)
+	c.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return `PC\ann`, run, nil }
+	if _, errOut, code := cli(t, c, false, "hook", "remove", "--yes"); code != exitOK || p3.elevatedArgs == nil {
+		t.Fatalf("an administrator: exit %d: %s", code, errOut)
+	}
+}

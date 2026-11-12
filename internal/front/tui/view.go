@@ -111,7 +111,7 @@ func (m model) header() string {
 	wslv := ""
 	if m.st.WSL != "" {
 		// The dot between is quieter than the words it separates.
-		wslv = ui.Fg(t.Faint).Render("  ·  ") + ui.Fg(t.Muted).Render("WSL "+m.st.WSL)
+		wslv = ui.Fg(t.Faint).Render("  "+ui.Sep()+"  ") + ui.Fg(t.Muted).Render("WSL "+m.st.WSL)
 	}
 	var right []string
 	if m.hook != nil {
@@ -131,7 +131,7 @@ func (m model) header() string {
 	}
 	// fit lays out a left side and right pieces, if they fit with a gap.
 	fit := func(l string, r []string) (string, bool) {
-		rs := strings.Join(r, ui.Fg(t.Faint).Render("  ·  "))
+		rs := strings.Join(r, ui.Fg(t.Faint).Render("  "+ui.Sep()+"  "))
 		gap := m.width - lipgloss.Width(l) - lipgloss.Width(rs) - 2
 		if gap < 2 {
 			return "", false
@@ -174,19 +174,27 @@ func (m model) mainView() string {
 	case !m.loaded:
 		return m.page(m.centered(h, append(m.logoBlock(), "", ui.Fg(t.Muted).Render(i18n.T("loading")))...), "", keys)
 	case m.err != nil:
-		lines := append(m.logoBlock(), "", ui.Fg(t.Cat[ui.CatCut]).Render("✗ "+errWords(m.err)))
+		// The one line that matters, wrapped, not cut: its lines after
+		// the first under its words, all of them a block in the middle.
+		w := min(m.width-8, max(48, lipgloss.Width(m.logoBlock()[0])))
+		lines := append(m.logoBlock(), "")
+		lines = append(lines, block(m.wrapHangTo("✗ ", "  ", errWords(m.err), w, ui.Fg(t.Cat[ui.CatCut])))...)
 		return m.page(m.centered(h, lines...), "", keys)
 	case len(m.st.List) == 0:
 		lines := append(m.logoBlock(), "", ui.Fg(t.Muted).Render(i18n.T("empty")))
 		return m.page(m.centered(h, lines...), "", keys)
 	}
-	body := m.table(m.width)
+	// The table takes what it needs, up to half the rows when the
+	// distributions are many: the selected one's row stays among those
+	// shown, and its details in sight under it.
+	body := m.table(m.width, max(4, h/2))
 	// recentIn is set when the details hold the newest stops and starts in
 	// their right column, on a wide screen.
 	recentIn := false
-	if rest := h - len(body) - 1; rest >= 3 {
+	if rest := h - len(body) - 2; rest >= 3 {
 		body = append(body, "")
-		// Three cells in, under the table's names.
+		// Three cells in, under the table's names; a blank row kept above
+		// the status line.
 		var lines []string
 		lines, recentIn = m.details(m.width-4, rest)
 		for _, l := range lines {
@@ -216,28 +224,46 @@ func (m model) centered(h int, lines ...string) []string {
 }
 
 // logoBlock is the logo as the screen draws it: the mark, and beside it the
-// name with this build's version over the line that says what it does. Its
-// lines are padded to one width, so placed in the middle the mark stays
-// where it is.
+// name with this build's version over the line that says what it does,
+// wrapped to two lines where one does not fit. Its lines are padded to one
+// width, the block's own, so placed in the middle the mark stays where it
+// is and the block stands in the middle of the screen.
 func (m model) logoBlock() []string {
 	t := m.th
 	mark := t.Logo()
 	name := lipgloss.NewStyle().Foreground(t.Ink).Bold(true).Render("wsl-spawner") + "  " + ui.Fg(t.Muted).Render(version.Short())
 	room := max(10, m.width-lipgloss.Width(mark[0])-8)
-	// The name and the line under it stand in the mark's middle rows.
+	// The name and the line under it stand in the mark's middle rows; the
+	// line's second half, where it needs one, in the row below.
 	lines := make([]string, len(mark))
 	copy(lines, mark)
 	mid := (len(mark) - 1) / 2
 	lines[mid] += "   " + name
-	lines[mid+1] += "   " + ui.Fg(t.Muted).Render(ui.Fit(i18n.T("logo.tagline"), room))
+	// One line where it fits; else two of about the same length, not a
+	// long one over a word or two.
+	words := i18n.T("logo.tagline")
+	if w := lipgloss.Width(words); w > room {
+		room = min(room, w/2+6)
+	}
+	tag := m.wrapTo(words, room, ui.Fg(t.Muted))
+	for i := 0; i < len(tag) && mid+1+i < len(lines); i++ {
+		lines[mid+1+i] += "   " + ui.Fit(tag[i], min(room, lipgloss.Width(tag[i])))
+	}
+	return block(lines)
+}
+
+// block pads lines to the widest's width, so placed in the middle they
+// stay aligned on the left as one block.
+func block(lines []string) []string {
 	w := 0
 	for _, l := range lines {
 		w = max(w, lipgloss.Width(l))
 	}
+	out := make([]string, len(lines))
 	for i, l := range lines {
-		lines[i] = l + strings.Repeat(" ", w-lipgloss.Width(l))
+		out[i] = l + strings.Repeat(" ", w-lipgloss.Width(l))
 	}
-	return lines
+	return out
 }
 
 // column is one column of the table: its heading, each row's cell, and
@@ -250,8 +276,10 @@ type column struct {
 
 // table is the distributions, one row each in w cells: a square in the
 // state's color, the name, the state, how far wsl-spawner goes with it, its
-// containers and how its last start ended. The selected row is lit.
-func (m model) table(w int) []string {
+// containers and how its last start ended. The selected row is lit. At most
+// rows lines: past that, the rows around the selected one, and a line that
+// says how many more there are above and below.
+func (m model) table(w, rows int) []string {
 	t := m.th
 	cols := []column{
 		{head: i18n.T("col.distro")}, {head: i18n.T("col.state")}, {head: i18n.T("col.kind"), drop: 3},
@@ -315,7 +343,16 @@ func (m model) table(w int) []string {
 		heads[i] = ui.Fg(t.Muted).Render(strings.ToUpper(c.head))
 	}
 	out := []string{line(" ", heads)}
-	for r, d := range m.st.List {
+	// The rows shown: all that fit under the heading, else as many as leave
+	// a line for the rest, the selected one in their middle where it can be.
+	n := len(m.st.List)
+	first, shown := 0, n
+	if n+1 > rows {
+		shown = max(1, rows-2)
+		first = min(max(0, m.sel-shown/2), n-shown)
+	}
+	for r := first; r < first+shown; r++ {
+		d := m.st.List[r]
 		cells := make([]string, len(cols))
 		for i, c := range cols {
 			cells[i] = c.cells[r]
@@ -327,7 +364,22 @@ func (m model) table(w int) []string {
 		}
 		out = append(out, row)
 	}
+	if shown < n {
+		out = append(out, "   "+ui.Fg(t.Muted).Render(moreRows(first, n-first-shown)))
+	}
 	return out
+}
+
+// moreRows says how many rows of the table are out of sight, above and
+// below the ones shown.
+func moreRows(above, below int) string {
+	switch {
+	case above == 0:
+		return i18n.T("table.more.below", below)
+	case below == 0:
+		return i18n.T("table.more.above", above)
+	}
+	return i18n.T("table.more.both", above, below)
 }
 
 // category is what a distribution's square says: running, stopped, or
@@ -390,13 +442,31 @@ func (m model) modeCell(d api.Distro) string {
 // containerWords counts the running containers of all.
 func (m model) containerWords(p api.Probe) string {
 	t := m.th
-	if len(p.Engines) == 0 {
-		return ui.Fg(t.Faint).Render("–")
-	}
-	for e, up := range p.Engines {
-		if !up {
-			return ui.Fg(t.Cat[ui.CatWarn]).Render(i18n.T("engine.down", e))
+	// An engine that does not answer is worth a look, before all. One
+	// asleep behind its socket, or another's daemon, is not: said quietly
+	// where no engine of the distribution's own runs.
+	quiet, up := "", false
+	for _, e := range []string{"docker", "podman"} {
+		isUp, found := p.Engines[e]
+		up = up || isUp
+		switch p.EngineStates[e] {
+		case "asleep":
+			quiet = i18n.T("engine.asleep", e)
+		case "foreign":
+			if quiet == "" {
+				quiet = i18n.T("engine.foreign", e)
+			}
+		default:
+			if found && !isUp {
+				return ui.Fg(t.Cat[ui.CatWarn]).Render(i18n.T("engine.down", e))
+			}
 		}
+	}
+	switch {
+	case !up && quiet != "":
+		return ui.Fg(t.Muted).Render(quiet)
+	case !up:
+		return ui.Fg(t.Faint).Render("–")
 	}
 	running := 0
 	for _, c := range p.Containers {
@@ -455,8 +525,8 @@ func (m model) endPieces(d api.Distro, long bool) []piece {
 	when := func(at time.Time, took float64, by string) []piece {
 		out := []piece{{" " + at.Local().Format("01-02 15:04"), ui.Fg(t.Muted), true}}
 		if long {
-			out = append(out, piece{" · " + i18n.T("secs", int(math.Round(took))), ui.Fg(t.Muted), true},
-				piece{" · " + byWords(by), ui.Fg(t.Muted), false})
+			out = append(out, piece{" " + ui.Sep() + " " + i18n.T("secs", int(math.Round(took))), ui.Fg(t.Muted), true},
+				piece{" " + ui.Sep() + " " + byWords(by), ui.Fg(t.Muted), false})
 		}
 		return out
 	}
@@ -600,6 +670,14 @@ type section struct {
 	fill func(w int) string
 	// list is set for a list that can lose rows to an "and N more".
 	list bool
+	// newest is set for rows newest first, as the recent stops and starts
+	// are, which can lose their oldest as they are: nothing is said of them.
+	newest bool
+	// whole is set for a section that says one thing with all its rows, as
+	// the choices and the next stop's steps with their bar do: it shows
+	// whole, or not at all. Another shows as many rows as fit, one at
+	// least: its first says the most, as how the last stop went.
+	whole bool
 }
 
 // details is the selected distribution in w cells and h rows: what it is,
@@ -639,7 +717,7 @@ func (m model) details(w, h int) (lines []string, recentIn bool) {
 		// verdict says they show once it runs, and a section would say it
 		// again.
 		if _, known := m.stateOf(d); known {
-			out = append(out, section{title: i18n.T("detail.choices"), rows: m.choicesRows(d, cw)})
+			out = append(out, section{title: i18n.T("detail.choices"), rows: m.choicesRows(d, cw), whole: true})
 		}
 		// Its last stop, where something says how it went: what runs in
 		// it, or the history; for one stopped with neither, a dash says
@@ -649,7 +727,7 @@ func (m model) details(w, h int) (lines []string, recentIn bool) {
 		}
 		if p != nil {
 			rows, fill := m.nextStopLines(*p, cw)
-			out = append(out, section{title: i18n.T("detail.nextstop"), rows: rows, fill: fill})
+			out = append(out, section{title: i18n.T("detail.nextstop"), rows: rows, fill: fill, whole: true})
 		}
 		return out
 	}
@@ -694,7 +772,7 @@ func (m model) details(w, h int) (lines []string, recentIn bool) {
 			list.rows = m.containerRows(*p, rw)
 			right = append(right, *list)
 		}
-		right = append(right, section{title: i18n.T("recent.title"), rows: m.recentRows(rw)})
+		right = append(right, section{title: i18n.T("recent.title"), rows: m.recentRows(rw), newest: true})
 		cols := beside(m.stack(side(natural), natural, room-1), natural, m.stack(right, rw, room-1))
 		return append(lines, cols...), true
 	}
@@ -739,7 +817,26 @@ func (m model) stack(secs []section, w, h int) []string {
 	t := m.th
 	var out []string
 	for i, sc := range secs {
+		gap := 0
 		if i > 0 {
+			gap = 1
+		}
+		// What the section needs under its heading: one row, or, for one
+		// that shows whole, all its rows and its bar. Short of that it
+		// goes, and those after it: no heading over nothing, no bar cut
+		// off. A list says the rows it has no room for as how many more;
+		// the others' later rows go without a word.
+		need := 1
+		if sc.whole {
+			need = len(sc.rows)
+			if sc.fill != nil {
+				need++
+			}
+		}
+		if h-len(out)-gap-1 < max(1, need) {
+			break
+		}
+		if gap > 0 {
 			out = append(out, "")
 		}
 		out = append(out, ui.Fit(lipgloss.NewStyle().Bold(true).Foreground(t.Muted).Render(sc.title), w))
@@ -776,11 +873,16 @@ func (m model) facts(d api.Distro) string {
 		parts = append(parts, i18n.T("fact.default"))
 	}
 	if p := d.Probe; p != nil && ours(d) {
-		switch {
-		case p.Systemd == "running" || p.Systemd == "degraded":
+		switch p.Systemd {
+		case "running", "degraded":
 			parts = append(parts, "systemd")
-		default:
+		case "":
 			parts = append(parts, i18n.T("fact.nosystemd"))
+		case "noanswer":
+			parts = append(parts, i18n.T("fact.systemd.noanswer"))
+		default:
+			// Starting, stopping and the like: said as systemd says it.
+			parts = append(parts, "systemd "+p.Systemd)
 		}
 		if len(p.Failed) > 0 {
 			parts = append(parts, i18n.TN("fact.failed", len(p.Failed), len(p.Failed)))
@@ -794,7 +896,7 @@ func (m model) facts(d api.Distro) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "  " + strings.Join(parts, " · ")
+	return "  " + strings.Join(parts, " "+ui.Sep()+" ")
 }
 
 // verdict is the line that says what matters most about a distribution,
@@ -834,6 +936,10 @@ func (m model) verdict(d api.Distro) (string, lipgloss.Style) {
 	case "failed":
 		return i18n.T("verdict.failed"), color(ui.CatWarn)
 	}
+	// No systemd: its services end with WSL, and nothing can be set up.
+	if p.Systemd == "" {
+		return i18n.T("verdict.nosystemd"), color(ui.CatWarn)
+	}
 	if !p.SetUp {
 		return i18n.T("verdict.stoponly"), ink
 	}
@@ -872,13 +978,16 @@ func backsItself(c api.Container) bool { return c.Policy == "always" || c.Policy
 func (m model) choicesRows(d api.Distro, cw int) []string {
 	t := m.th
 	s, _ := m.stateOf(d)
+	// A checklist: ✓ for a choice on, an empty circle for one off, as the
+	// wizard marks a choice not taken; the words name the choice, not a
+	// state, so an off one does not read as done.
 	mark := func(on bool, key string) string {
 		if on {
 			return ui.Fg(t.Mark).Render("✓") + " " + ui.Fg(t.Ink).Render(i18n.T(key))
 		}
-		return ui.Fg(t.Faint).Render("·") + " " + ui.Fg(t.Muted).Render(i18n.T(key))
+		return ui.Fg(t.Faint).Render("○") + " " + ui.Fg(t.Muted).Render(i18n.T(key))
 	}
-	marks := []string{mark(s.Managed, "choice.setup"), mark(s.Keep, "choice.keep"), mark(s.Logon, "choice.logon")}
+	marks := []string{mark(s.Managed, "choicebox.setup"), mark(s.Keep, "choicebox.keep"), mark(s.Logon, "choicebox.logon")}
 	if line := "  " + strings.Join(marks, "   "); lipgloss.Width(line) <= cw {
 		return []string{line}
 	}
@@ -1013,7 +1122,7 @@ func (m model) backPieces(p api.Probe) []piece {
 	out := []piece{{strings.Join(parts, ", "), ui.Fg(m.th.Ink), false}}
 	if p.ResumedAt != nil {
 		// The time on one line, the dot before it with it.
-		out = append(out, piece{" · " + p.ResumedAt.Local().Format("01-02 15:04"), ui.Fg(m.th.Muted), true})
+		out = append(out, piece{" " + ui.Sep() + " " + p.ResumedAt.Local().Format("01-02 15:04"), ui.Fg(m.th.Muted), true})
 	}
 	return out
 }
@@ -1133,7 +1242,7 @@ func choiceWords(s setup.State) string {
 	if s.Logon {
 		parts = append(parts, i18n.T("choice.logon"))
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " "+ui.Sep()+" ")
 }
 
 // recent is the newest stops and starts in w cells and h rows, under a
@@ -1187,10 +1296,14 @@ func (m model) entryParts(e history.Entry, layout string) (string, []piece) {
 	var parts []piece
 	for i, d := range e.Distros {
 		word, cat := i18n.T("end."+d.Result), endCat(d.Result)
+		// A stop out of time, or with a step failed: which step.
+		if s, ok := d.Late(); ok {
+			word += ": " + stepName(s)
+		}
 		if e.What == "start" {
 			word, cat = i18n.T("result."+d.Result), ui.CatRunning
 			if d.Result == "error" {
-				cat = ui.CatCut
+				word, cat = i18n.T("result.starterror"), ui.CatCut
 			}
 		}
 		// A comma after each but the last, and a space before each but
@@ -1221,6 +1334,19 @@ func (m model) entryParts(e history.Entry, layout string) (string, []piece) {
 	return lead, parts
 }
 
+// stepName names a stop's step for the history: a hook by its file, the
+// others as the run screen does, with a failed one's exit code.
+func stepName(s history.Step) string {
+	name := i18n.T("stepname." + s.Step)
+	if s.Step == "hook" {
+		name = i18n.T("step.hook", s.Hook)
+	}
+	if s.Code != 124 && s.Code != 0 {
+		name += i18n.T("stepname.exit", s.Code)
+	}
+	return name
+}
+
 // statusLine is the line above the keys: what just happened, or how many.
 func (m model) statusLine() string {
 	t := m.th
@@ -1233,7 +1359,7 @@ func (m model) statusLine() string {
 			running++
 		}
 	}
-	return " " + ui.Fg(t.Muted).Render(i18n.TN("status.distros", len(m.st.List), len(m.st.List))+" · "+i18n.TN("status.running", running, running))
+	return " " + ui.Fg(t.Muted).Render(i18n.TN("status.distros", len(m.st.List), len(m.st.List))+" "+ui.Sep()+" "+i18n.TN("status.running", running, running))
 }
 
 // footer is the main screen's keys: those that do something to the
@@ -1242,12 +1368,28 @@ func (m model) footer() string {
 	if m.ask != nil {
 		return m.keyBar([][2]string{{"⏎", i18n.T("key.do")}, {"esc", i18n.T("key.cancel")}})
 	}
+	// Nothing to select yet, or nothing at all: reading again, the check,
+	// help and quitting are what there is to do.
+	switch {
+	case !m.loaded:
+		return m.keyBar([][2]string{{"q", i18n.T("key.quit")}})
+	case m.err != nil || len(m.st.List) == 0:
+		return m.keyBar([][2]string{{"r", i18n.T("key.reload")}, {"c", i18n.T("key.check")}, {"?", i18n.T("key.help")}, {"q", i18n.T("key.quit")}})
+	}
 	keys := [][2]string{{"↑↓", i18n.T("key.select")}}
 	d, _ := m.selected()
 	switch {
 	case ours(d):
-		keys = append(keys, [2]string{"s", i18n.T("key.stop")}, [2]string{"t", i18n.T("key.start")}, [2]string{"m", i18n.T("key.setup")},
-			[2]string{"k", i18n.T("key.keep")}, [2]string{"l", i18n.T("key.logon")})
+		// Stop for one running, start for one stopped; the choices for one
+		// whose systemd is not known to be missing.
+		if d.Running {
+			keys = append(keys, [2]string{"s", i18n.T("key.stop")})
+		} else {
+			keys = append(keys, [2]string{"t", i18n.T("key.start")})
+		}
+		if p := d.Probe; p == nil || p.Systemd != "" {
+			keys = append(keys, [2]string{"m", i18n.T("key.setup")}, [2]string{"k", i18n.T("key.keep")}, [2]string{"l", i18n.T("key.logon")})
+		}
 	case d.Kind == "skipped":
 		// Left to WSL: making it wsl-spawner's again is all there is to do.
 		keys = append(keys, [2]string{"x", i18n.T("key.noskip")})
@@ -1493,7 +1635,7 @@ func (m model) askBox(a action) string {
 				if len(own) == 0 {
 					own = steps
 				}
-				line := bold.Render(ui.Fit(n, nameW)) + "  " + muted.Render(strings.Join(own, " · "))
+				line := bold.Render(ui.Fit(n, nameW)) + "  " + muted.Render(strings.Join(own, " "+ui.Sep()+" "))
 				short.items = append(short.items, []string{ui.Fit(line, iw)})
 			}
 		}
@@ -1571,7 +1713,7 @@ func (m model) runView() string {
 	title := runTitle(r)
 	if len(r.act.names) > 0 && r.act.shutdown {
 		// WSL's own stop after the distributions, quieter than their names.
-		title += ui.Fg(t.Muted).Render(" · " + i18n.T("run.thenwsl"))
+		title += ui.Fg(t.Muted).Render(" " + ui.Sep() + " " + i18n.T("run.thenwsl"))
 	}
 	// The time it took, against the right edge: as each distribution said
 	// at its end once done, as the clock runs until then.
@@ -1825,6 +1967,9 @@ func stepWords(s step) string {
 		return i18n.TN("step.containers", s.count, s.key, s.count)
 	case s.key == "sync":
 		return i18n.T("step.sync")
+	case s.key == "record":
+		// Said only when a file of the stop's own could not be written.
+		return i18n.T("step.record")
 	case s.key == "terminate":
 		return i18n.T("step.terminate")
 	}
@@ -1834,6 +1979,11 @@ func stepWords(s step) string {
 // resultWords says how one distribution's stop or start went.
 func (m model) resultWords(name, res string, r *runState) string {
 	t := m.th
+	// Another stop is stopping it: nothing went wrong, and that stop ends
+	// it. Said quietly, before the error its result carries for scripts.
+	if res == "busy" {
+		return ui.Fg(t.Muted).Render(i18n.T("result.busy"))
+	}
 	if e := r.errs[name]; e != "" {
 		return ui.Fg(t.Cat[ui.CatCut]).Render("✗ " + e)
 	}
@@ -1845,23 +1995,23 @@ func (m model) resultWords(name, res string, r *runState) string {
 	case "failed":
 		return ui.Fg(t.Cat[ui.CatWarn]).Render("! " + i18n.T("result.failed"))
 	case "started", "running":
-		s := ui.Fg(t.Cat[ui.CatClean]).Render("✓ " + i18n.T("result."+res))
+		s := ui.Fg(t.Cat[ui.CatRunning]).Render("✓ " + i18n.T("result."+res))
 		var back []string
 		for _, b := range r.back[name] {
 			back = append(back, b.Name+" "+i18n.T("back."+b.What))
 		}
 		if len(back) > 0 {
-			s += ui.Fg(t.Muted).Render(" · " + strings.Join(back, ", "))
+			s += ui.Fg(t.Muted).Render(" " + ui.Sep() + " " + strings.Join(back, ", "))
 		}
 		return s
 	}
 	return ui.Fg(t.Cat[ui.CatCut]).Render("✗ " + res)
 }
 
-// elapsed is a duration as m:ss.
+// elapsed is a duration in seconds, as a step's time and the stop's limit
+// are said beside it.
 func elapsed(d time.Duration) string {
-	s := int(d.Round(time.Second) / time.Second)
-	return fmt.Sprintf("%d:%02d", s/60, s%60)
+	return i18n.T("secs", int(d.Round(time.Second)/time.Second))
 }
 
 // scrolled is the lines from the scroll on, as many as the body holds,

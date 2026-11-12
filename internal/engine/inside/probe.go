@@ -5,6 +5,7 @@
 package inside
 
 import (
+	"cmp"
 	_ "embed"
 	"errors"
 	"slices"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/kanggu12/wsl-spawner/internal/core/plain"
 )
 
 //go:embed probe.sh
@@ -35,7 +38,8 @@ type Probe struct {
 	// Now is the distribution's clock as the probe ran, or zero.
 	Now time.Time
 	// Systemd is how far systemd is ("running", "degraded", "starting"),
-	// or "" when it is not this distribution's init.
+	// SystemdNoAnswer when it is this distribution's init and did not
+	// answer in its time, or "" when it is not this distribution's init.
 	Systemd string
 	// Failed are the units systemd lists as failed.
 	Failed []string
@@ -46,9 +50,15 @@ type Probe struct {
 	Interop bool
 	// Waitfor is where the distribution sees Windows' waitfor.exe, or "".
 	Waitfor string
-	// Engines says, for each container engine installed, whether it
-	// answered: docker or podman.
+	// Engines says, for each container engine of this distribution's that
+	// is installed, whether it answered: docker or podman. One asleep behind
+	// its socket did not, as it was not asked; a docker whose daemon is
+	// another's is not here.
 	Engines map[string]bool
+	// EngineStates says each container engine installed in the probe's
+	// word for it: EngineUp, EngineDown, EngineAsleep or EngineForeign.
+	// EngineState reads it.
+	EngineStates map[string]string
 	// LiveRestore is set when Docker keeps containers running while its
 	// daemon is stopped.
 	LiveRestore bool
@@ -62,6 +72,9 @@ type Probe struct {
 	// StopUnits are the units /etc/wsl-spawner/stop-units names, to stop
 	// before the containers, each with its own time.
 	StopUnits []string
+	// StopUnitStates says, by name, how each of StopUnits stood as the
+	// probe read it, where systemd runs: a stop stops only those that run.
+	StopUnitStates map[string]StopUnitState
 	// Runs are the starts the start script noted, oldest first.
 	Runs []Run
 	// LastStop is the last stop wsl-spawner made, or nil.
@@ -76,6 +89,66 @@ type Probe struct {
 	// says less than it seems.
 	Complete bool
 }
+
+// SystemdNoAnswer is the probe's word for a systemd that is this
+// distribution's init and did not say how far it is in its time.
+const SystemdNoAnswer = "noanswer"
+
+// The probe's words for a container engine installed in a distribution.
+const (
+	// EngineUp: its daemon answered, and its containers are listed.
+	EngineUp = "up"
+	// EngineDown: its daemon did not answer.
+	EngineDown = "down"
+	// EngineAsleep: Docker's daemon is stopped and its socket listens, as
+	// Docker's packages leave it: it was not asked, as asking starts it,
+	// and nothing of it runs.
+	EngineAsleep = "asleep"
+	// EngineForeign: a docker command is here, but no daemon of this
+	// distribution's: systemd has no unit of Docker's, and no pid file
+	// names a dockerd that runs. It answers for Docker Desktop's, through
+	// its WSL integration, or another engine's, or for none. It is left
+	// alone: not asked, its containers not listed, stopped or noted, and
+	// it is not in Engines.
+	EngineForeign = "foreign"
+)
+
+// EngineState is the probe's word for the container engine named name,
+// or "" where it is not installed. A probe made without the words, as a
+// test's, is read from Engines.
+func (p Probe) EngineState(name string) string {
+	if s, ok := p.EngineStates[name]; ok {
+		return s
+	}
+	// Up or not is all Engines says.
+	if up, ok := p.Engines[name]; ok {
+		if up {
+			return EngineUp
+		}
+		return EngineDown
+	}
+	return ""
+}
+
+// TakenStopUnits are the units of StopUnits a stop takes now: those that
+// run, as the stop script takes only such; one whose state was not read
+// counts, as the stop looks again itself.
+func (p Probe) TakenStopUnits() []string {
+	var out []string
+	for _, u := range p.StopUnits {
+		if st, ok := p.StopUnitStates[u]; ok && (st.Load == "not-found" || st.Active != "" && st.Active != "active") {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// StopUnitState is how one unit stop-units names stood: Load is systemd's
+// LoadState ("loaded", or "not-found" for a name it does not have), Active
+// whether it runs ("active", "inactive", "activating" and the like). Either
+// is "" where systemd did not answer in its time.
+type StopUnitState struct{ Load, Active string }
 
 // Unit is one systemd unit's state.
 type Unit struct {
@@ -179,6 +252,31 @@ func (p Probe) SetUp() bool { return strings.HasPrefix(p.StartScript, StartScrip
 // follows.
 const StartScriptMark = "# wsl-spawner start "
 
+// StartScriptOlder reports whether the start script set up in the
+// distribution is from an older version than this build's: --managed puts
+// this build's in its place. A first line that names no version number is
+// taken for an older one.
+func (p Probe) StartScriptOlder() bool { return p.SetUp() && p.startScriptAge() < 0 }
+
+// StartScriptNewer reports whether the start script set up in the
+// distribution is from a newer version than this build's, which a later
+// wsl-spawner put: it stays as it is.
+func (p Probe) StartScriptNewer() bool { return p.SetUp() && p.startScriptAge() > 0 }
+
+// startScriptAge compares the version the start script's first line names
+// with this build's by their numbers: below 0 older, 0 the same, above 0
+// newer. A line that names no number is older, as no version wrote one.
+func (p Probe) startScriptAge() int {
+	theirs, err := strconv.Atoi(strings.TrimPrefix(p.StartScript, StartScriptMark))
+	if err != nil {
+		return -1
+	}
+	// This build's own version is a number: a test pins it to the script's
+	// first line.
+	ours, _ := strconv.Atoi(StartScriptVersion)
+	return cmp.Compare(theirs, ours)
+}
+
 // KeptRunning reports whether the service that keeps the distribution
 // running is enabled.
 func (p Probe) KeptRunning() bool {
@@ -200,12 +298,18 @@ var ErrNoProbe = errors.New("the distribution did not answer the probe")
 
 // Parse reads what the probe printed.
 func Parse(out string) (Probe, error) {
-	p := Probe{Units: map[string]Unit{}, Engines: map[string]bool{}}
+	p := Probe{Units: map[string]Unit{}, Engines: map[string]bool{}, EngineStates: map[string]string{}, StopUnitStates: map[string]StopUnitState{}}
 	seen := false
 	for line := range strings.SplitSeq(strings.ReplaceAll(out, "\r", ""), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
+		}
+		// What a distribution says is shown, so it is made safe to show: a
+		// tab separates the fields of a container, a unit and a stop unit,
+		// and stays until they are split, each field made safe then.
+		if key != "container" && key != "unit" && key != "stop_unit" {
+			value = plain.Text(value)
 		}
 		switch key {
 		case "probe":
@@ -230,14 +334,19 @@ func Parse(out string) (Probe, error) {
 			p.Failed = append(p.Failed, value)
 		case "unit":
 			if f := strings.Split(value, "\t"); len(f) == 3 {
-				p.Units[f[0]] = Unit{Active: f[1], Enabled: f[2]}
+				p.Units[plain.Text(f[0])] = Unit{Active: plain.Text(f[1]), Enabled: plain.Text(f[2])}
 			}
 		case "interop":
 			p.Interop = value == "1"
 		case "waitfor":
 			p.Waitfor = value
 		case "docker", "podman":
-			p.Engines[key] = value == "up"
+			// The word as said, and whether it answered: asleep did not. One
+			// that is another's is no engine of this distribution's.
+			p.EngineStates[key] = value
+			if value != EngineForeign {
+				p.Engines[key] = value == EngineUp
+			}
 		case "docker_live_restore":
 			p.LiveRestore = value == "true"
 		case "container":
@@ -249,7 +358,14 @@ func Parse(out string) (Probe, error) {
 		case "hook":
 			p.Hooks = append(p.Hooks, value)
 		case "stop_unit":
-			p.StopUnits = append(p.StopUnits, value)
+			// The name, then where systemd runs how it stands: whether
+			// systemd has it, and whether it runs.
+			f := strings.Split(value, "\t")
+			name := plain.Text(f[0])
+			p.StopUnits = append(p.StopUnits, name)
+			if len(f) == 3 {
+				p.StopUnitStates[name] = StopUnitState{Load: plain.Text(f[1]), Active: plain.Text(f[2])}
+			}
 		case "run":
 			if r, ok := parseRun(value); ok {
 				p.Runs = append(p.Runs, r)
@@ -310,6 +426,13 @@ func parseContainer(v string) (Container, bool) {
 	f := strings.Split(v, "\t")
 	if len(f) < 8 || f[1] == "" {
 		return Container{}, false
+	}
+	// Each field made safe to show, but the project's, which project reads
+	// quoted and judges as it is.
+	for i := range f {
+		if i != 7 {
+			f[i] = plain.Text(f[i])
+		}
 	}
 	c := Container{Engine: f[0], ID: f[1], Name: strings.TrimPrefix(f[2], "/"), State: f[3],
 		Policy: unset(f[4]), Image: unset(f[6]), Project: project(f[7])}

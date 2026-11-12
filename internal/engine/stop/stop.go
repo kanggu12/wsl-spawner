@@ -7,6 +7,8 @@ package stop
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,10 @@ type Options struct {
 // before it is taken for one that will not end: starting it, and WSL
 // answering slowly, take time of their own.
 const Margin = 30 * time.Second
+
+// busyPoll is how often a shutdown looks whether a distribution another
+// stop is stopping has stopped. A variable so tests can make it short.
+var busyPoll = 2 * time.Second
 
 // Event is one thing that happened, for a front to show as it happens.
 type Event struct {
@@ -65,6 +71,10 @@ type Result struct {
 // Clean reports whether every step had its time and the distribution ended.
 func (r Result) Clean() bool { return r.End == "clean" && r.Err == nil }
 
+// Busy reports whether another stop of the distribution was running: this
+// one left it to that stop, which ends it, and changed nothing in it.
+func (r Result) Busy() bool { return r.End == "busy" }
+
 // Run stops the distributions named, all at once, and WSL after them when
 // asked. on is called with each event, one at a time; now is read from
 // every distribution's goroutine at once. A distribution that fails is said
@@ -91,6 +101,10 @@ func Run(ctx context.Context, sys wsl.System, names []string, o Options, now fun
 	}
 	wg.Wait()
 	if o.Shutdown {
+		// WSL's own stop ends every distribution at once: one another stop is
+		// stopping is waited for first, as that stop ends it once its steps
+		// are done, and the shutdown would cut them short.
+		waitForOthers(ctx, sys, results, o.Limit+Margin)
 		say(Event{Kind: "shutdown"})
 		err := sys.Shutdown(context.WithoutCancel(ctx))
 		say(Event{Kind: "shutdown", Done: true, Err: err})
@@ -126,6 +140,15 @@ func one(ctx context.Context, sys wsl.System, name, script string, limit time.Du
 		say(Event{Distro: name, Kind: "line", Line: l})
 	})
 	cancel()
+	if r.Busy() {
+		// Another stop is at work in it, and ends it once its steps are
+		// done: this one neither ends it under those steps nor says it
+		// stopped it.
+		r.Err = fmt.Errorf("another stop of %s is running", name)
+		r.Took = now().Sub(start)
+		say(Event{Distro: name, Kind: "finished", Result: &r})
+		return r
+	}
 	if err != nil && r.End == "error" {
 		r.Err = fmt.Errorf("the stop inside %s did not run to its end: %w", name, err)
 	}
@@ -143,11 +166,47 @@ func one(ctx context.Context, sys wsl.System, name, script string, limit time.Du
 	return r
 }
 
+// waitForOthers waits until every distribution another stop was stopping
+// has stopped, as that stop ends it once its steps are done, for limit at
+// most, or until ctx is done.
+func waitForOthers(ctx context.Context, sys wsl.System, results []Result, limit time.Duration) {
+	var busy []string
+	for _, r := range results {
+		if r.Busy() {
+			busy = append(busy, r.Distro)
+		}
+	}
+	if len(busy) == 0 {
+		return
+	}
+	for deadline := time.Now().Add(limit); time.Now().Before(deadline); {
+		// WSL that does not say which run says nothing to wait for.
+		ds, err := sys.Distros(ctx)
+		if err != nil {
+			return
+		}
+		if !slices.ContainsFunc(ds, func(d wsl.Distro) bool {
+			return d.Running && slices.ContainsFunc(busy, func(n string) bool { return strings.EqualFold(n, d.Name) })
+		}) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(busyPoll):
+		}
+	}
+}
+
 // Entry is the history's record of a stop that started at start and ran
-// for took.
+// for took. A distribution another stop was stopping is that stop's to
+// record, and is not in it.
 func Entry(results []Result, o Options, start time.Time, took time.Duration, err error, version string) history.Entry {
 	e := history.Entry{At: start, Took: took.Seconds(), What: "stop", By: o.By, Shutdown: o.Shutdown, Version: version}
 	for _, r := range results {
+		if r.Busy() {
+			continue
+		}
 		d := history.Distro{Name: r.Distro, Result: r.End, Took: r.Took.Seconds(), Steps: r.Steps}
 		if r.Err != nil {
 			d.Err = r.Err.Error()

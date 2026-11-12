@@ -32,6 +32,16 @@ func SetMarks(m MarkSet) { set = m }
 // Plain reports whether marks are swapped at all.
 func Plain() bool { return set != MarksUnicode }
 
+// Sep is the dot between words, as in "default · systemd": a bar where the
+// marks are ASCII, as the dot's stand-in there, a full stop, would read as
+// the end of a sentence. The dot alone, a step waiting, stays one.
+func Sep() string {
+	if set == MarksASCII {
+		return "|"
+	}
+	return "·"
+}
+
 // Each stand-in is ASCII, which every font has, one cell wide like the mark
 // it replaces, so a screen measured with the marks still fits it. ⏎ alone
 // becomes a word, put in before anything is measured (Words); in a screen
@@ -39,7 +49,7 @@ func Plain() bool { return set != MarksUnicode }
 var (
 	// lacking are the marks the console's own fonts have no glyph for. A
 	// step done is +, not v: v reads as a word, and as the arrow down.
-	lacking = []string{"✓", "+", "✗", "x", "↻", "~", "▶", ">",
+	lacking = []string{"✓", "+", "✗", "x", "↻", "~", "❯", ">",
 		"⠋", "|", "⠙", "/", "⠹", "-", "⠸", "\\", "⠼", "|", "⠴", "/", "⠦", "-", "⠧", "\\", "⠇", "|", "⠏", "/"}
 	// wide are the characters an East Asian console draws two cells wide:
 	// marks, arrows and the lines of a box, whose corners become +. A step

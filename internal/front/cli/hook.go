@@ -174,11 +174,11 @@ func hookCmd(p *apps) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "hook",
 		Short: "The sign-out hook: every distribution stopped the slow way as Windows signs out, shuts down or restarts",
-		Long: "The sign-out hook is a sign-out script in this PC's local Group Policy. Windows runs\n" +
-			"the sign-out scripts as you sign out, and before every shutdown and restart, an\n" +
-			"update's included, and waits for each. wsl-spawner's runs last: it stops every\n" +
-			"running distribution as wsl-spawner stop --all does, then WSL. Installing and\n" +
-			"removing it needs an administrator; Windows asks.",
+		Long: "The sign-out hook is a sign-out script in this PC's local Group Policy. Windows\n" +
+			"runs the sign-out scripts as you sign out, and before every shutdown and\n" +
+			"restart, those an update makes too, and waits for each. wsl-spawner's runs last:\n" +
+			"it stops every running distribution as wsl-spawner stop --all does, then WSL.\n" +
+			"Installing and removing it needs an administrator; Windows asks.",
 		// A word that is none of its commands is a mistake in the command
 		// line, said with the command meant, as the root says it: cobra's
 		// own "unknown command", which usageHint answers. Without a run of
@@ -336,12 +336,21 @@ func hookChangeCmd(p *apps, add bool) *cobra.Command {
 	var yes bool
 	var report string
 	use, short := "remove", "Remove the sign-out hook"
+	long := "Takes wsl-spawner's sign-out script out of this PC's local Group Policy, with\n" +
+		"the sign-out scripts of copies of wsl-spawner that are gone. It needs an\n" +
+		"administrator: Windows asks.\n\n" + hookExits
 	if add {
 		use, short = "install", "Install the sign-out hook, the last sign-out script"
+		long = "Adds wsl-spawner's sign-out script to this PC's local Group Policy, after the\n" +
+			"other sign-out scripts, and has Windows read it. It needs an administrator:\n" +
+			"Windows asks. The hook runs for every user of the PC, as whoever signs out, so\n" +
+			"the program must be on a fixed disk of this PC, in a folder only you and\n" +
+			"administrators can write to, as its install script puts it.\n\n" + hookExits
 	}
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
+		Long:  long,
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// The hook reads no settings, so a file that does not load
@@ -366,6 +375,17 @@ func hookChangeCmd(p *apps, add bool) *cobra.Command {
 	return c
 }
 
+// hookExits is what the exit codes of hook install and remove mean, for
+// their help.
+const hookExits = "Exit codes: 0 done, or nothing to change; 1 not done; 2 a mistake in the\n" +
+	"command line; 3 done in the policy's files, but Windows has not read it yet: it\n" +
+	"counts from Windows' next reading of your policy, as you sign in at the latest."
+
+// gpeditLogoff is where the sign-out scripts are in the Local Group Policy
+// Editor, as the editor names each step: for a person to take one out, or
+// put right a file wsl-spawner leaves as it is.
+const gpeditLogoff = "gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff"
+
 // runHookChange says what installing or removing the hook does, asks, and
 // does it, as an administrator.
 func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
@@ -381,6 +401,9 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	// Windows could not count on at sign-out.
 	if add {
 		if err := startable(pc, h.Exe, "sign-out hook"); err != nil {
+			return err
+		}
+		if err := nobodyElseChanges(pc, h.Exe); err != nil {
 			return err
 		}
 	}
@@ -406,6 +429,18 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	}
 	if tryErr != nil {
 		return unsureHint(fmt.Errorf("the sign-out scripts were left as they are: %w", tryErr))
+	}
+	// The copy Windows would start as an administrator, and, for a
+	// standard user, whether anyone else could change it: said before the
+	// plan and the question, as nothing the answer changes.
+	run := ""
+	if !pc.Elevated() {
+		if run, err = elevatedProgram(pc, h, add); err != nil {
+			return err
+		}
+		if err := nobodyElseElevates(pc, run, hookVerb(add)); err != nil {
+			return err
+		}
 	}
 	switch {
 	case add:
@@ -438,10 +473,7 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	if pc.Elevated() {
 		err = change(pc, add, h.Exe, gone)
 	} else {
-		var run string
-		if run, err = elevatedProgram(pc, h, add); err == nil {
-			err = changeAsAdmin(pc, add, run)
-		}
+		err = changeAsAdmin(pc, add, run)
 	}
 	// How it went. In the policy's files, but not read by Windows yet: done,
 	// and not as it should be, which a script must tell from a clean end.
@@ -509,6 +541,84 @@ func startable(pc app.PC, exe, what string) error {
 	return hint(fmt.Errorf("the %s must start a program on a fixed disk of this PC, and %s is not on one", what, exe), "install wsl-spawner on Windows with its install script, which puts it on this PC's own disk, and run it from there")
 }
 
+// nobodyElseChanges refuses exe as what the sign-out hook starts when
+// someone beyond its installer, the system and the administrators can change
+// it, or where it stands: the hook is in a policy that applies to every user
+// of the PC, and runs as whoever signs out, an administrator among them. A
+// program another user could put another in the place of would be theirs to
+// run as every other.
+func nobodyElseChanges(pc app.PC, exe string) error {
+	who, at, err := pc.OthersCanChange(exe)
+	switch {
+	case err != nil:
+		return hint(fmt.Errorf("could not tell who may change %s: %w", exe, err), "install wsl-spawner with its install script, which puts it where only you and administrators can write")
+	case who == "":
+		return nil
+	}
+	return hint(fmt.Errorf("%s, and the sign-out hook runs it for every user of this PC, as whoever signs out", changeable(who, at, exe)), placeHint(pc.IsStandardUser()))
+}
+
+// changeable says who can change the program at exe, and by what: the
+// program itself, or a folder that holds it.
+func changeable(who, at, exe string) string {
+	if at == exe {
+		return who + " can change " + exe
+	}
+	return who + " can change " + at + ", which holds " + baseName(exe)
+}
+
+// baseName is the last part of a Windows path, whichever slash it is
+// written with: a test's made-up PC runs on Linux, whose filepath reads a
+// backslash as a letter.
+func baseName(path string) string {
+	return path[strings.LastIndexAny(path, `\/`)+1:]
+}
+
+// placeHint is where wsl-spawner must be for its sign-out hook, when anyone
+// else could change it where it is. A standard user would have an
+// administrator run it, so their own folder will not do: an
+// administrator's install, under Program Files, whose hook runs as every
+// user signs out, them too. check says the same.
+func placeHint(standard bool) string {
+	if standard {
+		return standardPlace
+	}
+	return "install wsl-spawner in a folder only you and administrators can write to, as its install script does, or take that permission away, then run this again"
+}
+
+// standardPlace is the way to a sign-out hook for a standard user.
+const standardPlace = "an administrator can install wsl-spawner under Program Files and its sign-out hook from there, which runs as you sign out too"
+
+// nobodyElseElevates refuses, for a standard user, to have Windows start
+// run as an administrator when anyone beyond the administrators and the
+// system can change it: it is the standard user's own program, and
+// Windows would ask for an administrator's own name and password to start
+// it, which one swapped for the real program, by anything that runs as that
+// user, would be given as that administrator. Whoever is an administrator
+// asks with consent, and that is no way in. verb is hook install or remove,
+// for the way out.
+func nobodyElseElevates(pc app.PC, run, verb string) error {
+	if !pc.IsStandardUser() {
+		return nil
+	}
+	who, at, err := pc.OthersCanChange(run)
+	// Installing: an administrator's own install does it. Removing: an
+	// administrator's own copy takes out only its own hook, and running
+	// this one as an administrator is what is refused, so the editor is
+	// the way.
+	way := standardPlace
+	if verb == "remove" {
+		way = "an administrator can take it out in " + gpeditLogoff
+	}
+	switch {
+	case err != nil:
+		return hint(fmt.Errorf("could not tell who may change %s, which Windows would run with an administrator's rights: %w", run, err), way)
+	case who == "":
+		return nil
+	}
+	return hint(fmt.Errorf("%s, and Windows would run it with the administrator's rights you give it", changeable(who, at, run)), way)
+}
+
 // unsureHint adds what to do to an error about a policy file wsl-spawner
 // cannot read, or change, for certain as Windows does; other errors stay as
 // they are.
@@ -517,7 +627,7 @@ func unsureHint(err error) error {
 	if !errors.As(err, &u) {
 		return err
 	}
-	return hint(err, "wsl-spawner leaves such a file as it is: put it right by hand, or in gpedit.msc (User Configuration, Windows Settings, Scripts), then try again")
+	return hint(err, "wsl-spawner leaves such a file as it is: put it right by hand, or in "+gpeditLogoff+", then try again")
 }
 
 // use is what --yes does, for the question no one can answer.
@@ -598,7 +708,7 @@ func changeAsAdmin(pc app.PC, add bool, run string) error {
 	verb := hookVerb(add)
 	code, err := pc.RunElevated(run, []string{"hook", verb, "--yes", "--report", path})
 	if errors.Is(err, winapi.ErrDeclined) {
-		return hint(errors.New("nothing changed: the administrator's permission was not given"), "wsl-spawner hook "+verb+" asks again")
+		return hint(fmt.Errorf("nothing changed: %w", errDeclined), "wsl-spawner hook "+verb+" asks again")
 	}
 	if err != nil {
 		return notStarted{err}
@@ -609,13 +719,23 @@ func changeAsAdmin(pc app.PC, add bool, run string) error {
 		if said == "" {
 			said = "exit code " + strconv.Itoa(code)
 		}
-		return fmt.Errorf("the hook was not changed: %s", said)
+		// What went wrong, then what to do, as the copy wrote them.
+		msg, what, _ := strings.Cut(said, "\n")
+		err := fmt.Errorf("the hook was not changed: %s", strings.TrimSpace(msg))
+		if what = strings.TrimSpace(what); what != "" {
+			return hint(err, what)
+		}
+		return err
 	}
 	if err := pc.Refresh(); err != nil {
 		return notRead{err}
 	}
 	return nil
 }
+
+// errDeclined is a no to Windows' question for an administrator's
+// permission, as changeAsAdmin says it.
+var errDeclined = errors.New("the administrator's permission was not given")
 
 // reportName is the name of the file changeAsAdmin makes for the answer,
 // as os.CreateTemp names it.
@@ -647,16 +767,25 @@ func elevatedChange(pc app.PC, add bool, report string) error {
 	if err == nil && h.NoQuiet && add {
 		err = app.ErrNoQuietExe
 	}
-	// The same refusal as the one that asked, whoever started this copy.
+	// The same refusals as the ones that asked, whoever started this copy.
 	if err == nil && add {
 		err = startable(pc, h.Exe, "sign-out hook")
+	}
+	if err == nil && add {
+		err = nobodyElseChanges(pc, h.Exe)
 	}
 	if err == nil {
 		err = changeFiles(pc, add, h.Exe, h.gone())
 	}
 	said := "ok"
 	if err != nil {
-		said = err.Error()
+		// What went wrong on its line, what to do on the next: the copy
+		// that asked says them as its own.
+		msg, what := splitHint(err)
+		said = msg
+		if what != "" {
+			said += "\n" + what
+		}
 	}
 	if _, werr := w.WriteString(said + "\n"); werr != nil && err == nil {
 		err = werr

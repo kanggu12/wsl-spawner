@@ -309,6 +309,19 @@ func fullPath(p string) bool {
 // go into the file, after the "=".
 type planned struct{ cmd, par string }
 
+// scriptPath is exe as it is written into the file for Windows to run: in
+// double quotes when it holds a blank, as Windows' guidance for a script's
+// path has it. Unquoted, a path such as C:\Users\Ann Lee\... is read as a
+// program named for the part before the blank, or not run at all, and the
+// hook would never stop anything. A reader takes the quotes off, as it does
+// for any entry, so the entry is still the program it names.
+func scriptPath(exe string) string {
+	if strings.ContainsAny(exe, " \t") {
+		return `"` + exe + `"`
+	}
+	return exe
+}
+
 // rewrite is the file's text with want as the scripts Windows runs, in
 // their order, indexed from 0. Every other line of the section stays as it
 // is written, after the scripts; but a script of exe's that Windows does
@@ -408,7 +421,7 @@ func WithHook(text, exe, params string, drop ...string) (string, error) {
 	if lo.doubt != "" {
 		return "", unsure("%s", lo.doubt)
 	}
-	return lo.rewrite(append(lo.others(exe, drop), planned{exe, params}), exe)
+	return lo.rewrite(append(lo.others(exe, drop), planned{scriptPath(exe), params}), exe)
 }
 
 // WithoutHook is scripts.ini's text without exe's hook, nor the scripts of

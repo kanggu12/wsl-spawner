@@ -4,16 +4,19 @@ package wsl
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/kanggu12/wsl-spawner/internal/core/plain"
 )
 
 // lxssKey is where WSL registers each user's distributions.
@@ -25,6 +28,19 @@ type Real struct{}
 // New returns the System of this PC.
 func New() System { return Real{} }
 
+// wslExePath is wsl.exe in Windows' own folder, where it always is, and
+// which forwards to the WSL from the Store: not one a folder on the PATH may
+// hold in its place, as the sign-out hook runs it as whoever signs out.
+func wslExePath() string {
+	if sys, err := windows.GetSystemDirectory(); err == nil {
+		p := filepath.Join(sys, "wsl.exe")
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return "wsl.exe"
+}
+
 // wslExe runs wsl.exe without a console window of its own and returns its
 // decoded output; the error carries that output, which says what went wrong.
 func wslExe(ctx context.Context, args ...string) (string, error) {
@@ -33,7 +49,7 @@ func wslExe(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := limited(ctx)
 	defer cancel()
 	limit := timeLeft(ctx)
-	cmd := exec.CommandContext(ctx, "wsl.exe", args...)
+	cmd := exec.CommandContext(ctx, wslExePath(), args...)
 	// From Windows' own folder: started from a folder inside WSL (a
 	// \\wsl.localhost path), wsl.exe warns into its output that it cannot
 	// carry that folder over to the distribution it starts.
@@ -46,7 +62,7 @@ func wslExe(ctx context.Context, args ...string) (string, error) {
 	// Ended at its limit, wsl.exe may leave something holding its output
 	// open; the call returns a few seconds later all the same.
 	cmd.WaitDelay = 5 * time.Second
-	var out bytes.Buffer
+	var out capped
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	text := decode(out.Bytes())
@@ -55,7 +71,7 @@ func wslExe(ctx context.Context, args ...string) (string, error) {
 		if na := noAnswer(ctx, args, limit); na != nil {
 			return text, na
 		}
-		return text, fmt.Errorf("wsl %s: %w: %s", describe(args), err, strings.TrimSpace(text))
+		return text, fmt.Errorf("wsl %s: %w: %s", describe(args), err, plain.Lines(strings.TrimSpace(text)))
 	}
 	return text, nil
 }
@@ -137,14 +153,14 @@ func (r Real) Stream(ctx context.Context, distro, user, script string, line func
 		return fmt.Errorf("%s is %w", d.Name, ErrNotRunning)
 	}
 	args := []string{"--distribution", d.Name, "--user", user, "--exec", "sh", "-c", script}
-	cmd := exec.CommandContext(ctx, "wsl.exe", args...)
+	cmd := exec.CommandContext(ctx, wslExePath(), args...)
 	if root := os.Getenv("SystemRoot"); root != "" {
 		cmd.Dir = root
 	}
 	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
 	cmd.WaitDelay = 5 * time.Second
-	var errOut bytes.Buffer
+	var errOut capped
 	cmd.Stderr = &errOut
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -161,7 +177,7 @@ func (r Real) Stream(ctx context.Context, distro, user, script string, line func
 		line(strings.TrimRight(sc.Text(), "\r"))
 	}
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("wsl %s: %w: %s", describe(args), err, strings.TrimSpace(decode(errOut.Bytes())))
+		return fmt.Errorf("wsl %s: %w: %s", describe(args), err, plain.Lines(strings.TrimSpace(decode(errOut.Bytes()))))
 	}
 	return nil
 }

@@ -389,8 +389,14 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key {
-	case "q", "esc":
+	case "q":
 		return m, tea.Quit
+	case "esc":
+		// Back from every other screen; here there is nothing to go back
+		// to, and a second esc from the check must not quit: it clears
+		// what the status line says, and nothing more.
+		m.note = ""
+		return m, nil
 	case "down":
 		if m.sel < len(m.st.List)-1 {
 			m.sel++

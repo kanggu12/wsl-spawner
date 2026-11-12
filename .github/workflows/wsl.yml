@@ -197,11 +197,29 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
+          # The checkout is under D:\a, where Windows lets every user write.
+          # The hook is in a policy for every user and runs as whoever signs
+          # out, so it refuses a program from such a place, and says who may
+          # change it. Where D:\a does not let every user write, it installs
+          # and is taken out again.
+          $said = & ./dist/wsl-spawner.exe hook install --yes 2>&1 | Out-String
+          # Refused is exit 1 with who can change what; installed is 0, or 3
+          # where Windows has not read it yet. Anything else, an exit 1 in
+          # other words among it, fails the step.
+          if ($LASTEXITCODE -eq 1 -and $said -match 'can change') { "refused, as it must be: $($said.Trim())" }
+          elseif ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3) { "not refused: this runner's folder is not one every user may write ($($said.Trim()))"; & ./dist/wsl-spawner.exe hook remove --yes | Out-Null }
+          else { $said; "hook install from the checkout exited $LASTEXITCODE"; exit 1 }
+          # Where only this account and the administrators write: the folder
+          # of this account's profile.
+          $safe = Join-Path $env:USERPROFILE 'wsl-spawner-ci'
+          New-Item -ItemType Directory -Path $safe -Force | Out-Null
+          Copy-Item dist/wsl-spawner.exe, dist/wsl-spawnerw.exe $safe -Force
+          $exe = "$safe\wsl-spawner.exe"
           # The runner's account is an administrator, so the change needs no
           # question. Exit 3 is a hook in the policy's files that Windows has
           # not read yet: gpupdate may not read user policy for the job's
           # account. This step looks at the files and the hook's own run.
-          ./dist/wsl-spawner.exe hook install --yes
+          & $exe hook install --yes
           $code = $LASTEXITCODE
           if ($code -eq 3) { 'hook install: in the policy, but Windows has not read it yet (its words are above)' }
           elseif ($code -ne 0) { "hook install exited $code"; exit 1 }
@@ -212,7 +230,7 @@ jobs:
               ForEach-Object { $_.GetValue('Script') } | Where-Object { $_ }
             "the sign-out scripts Windows took in for this account: $(if ($read) { $read -join ', ' } else { '(none listed)' })"
           }
-          $h = ./dist/wsl-spawner.exe hook status --json | ConvertFrom-Json
+          $h = & $exe hook status --json | ConvertFrom-Json
           $h | ConvertTo-Json
           if (-not $h.installed -or -not $h.last) { 'the hook is not installed last'; exit 1 }
           $ini = [IO.File]::ReadAllText((Join-Path $env:SystemRoot 'System32\GroupPolicy\User\Scripts\scripts.ini'))
@@ -221,7 +239,7 @@ jobs:
           # console, and waited for.
           # Waited for as Windows waits: that one process, not what it
           # started, which WSL keeps running.
-          $p = Start-Process -FilePath (Resolve-Path dist/wsl-spawnerw.exe).Path -ArgumentList 'logoff' -PassThru
+          $p = Start-Process -FilePath "$safe\wsl-spawnerw.exe" -ArgumentList 'logoff' -PassThru
           # Its handle, taken while it runs: without one, the object
           # Start-Process gives has no exit code once the process has ended.
           $null = $p.Handle
@@ -233,14 +251,52 @@ jobs:
           $last | ConvertTo-Json -Depth 6
           if ($last.what -ne 'stop' -or $last.by -ne 'signout' -or -not $last.shutdown) { 'the history has no stop by sign-out that stopped WSL'; exit 1 }
           if ($last.distributions[0].result -ne 'clean') { "the sign-out stop ended $($last.distributions[0].result)"; exit 1 }
-          ./dist/wsl-spawner.exe hook remove --yes
+          & $exe hook remove --yes
           $code = $LASTEXITCODE
           # 3, as for the install: out of the files, Windows' reading aside.
           if ($code -eq 3) { 'hook remove: out of the policy, but Windows has not read that yet (its words are above)' }
           elseif ($code -ne 0) { "hook remove exited $code"; exit 1 }
-          if ((./dist/wsl-spawner.exe hook status --json | ConvertFrom-Json).installed) { 'the hook is still installed'; exit 1 }
+          if ((& $exe hook status --json | ConvertFrom-Json).installed) { 'the hook is still installed'; exit 1 }
           $ini = [IO.File]::ReadAllText((Join-Path $env:SystemRoot 'System32\GroupPolicy\User\Scripts\scripts.ini'))
           if ($ini -match 'wsl-spawnerw\.exe') { $ini; 'scripts.ini still names the program'; exit 1 }
+          exit 0
+      - name: the sign-out hook of a program in a folder with a blank in its name
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # A user named Ann Lee has the program in C:\Users\Ann Lee\...: the
+          # path is written into the policy in quotes, and Windows must still
+          # take the entry in as that program. A folder under Program Files has
+          # a blank in its path, and only administrators write it, which the
+          # hook requires.
+          $dir = Join-Path $env:ProgramFiles 'wsl-spawner ci'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item dist/wsl-spawner.exe, dist/wsl-spawnerw.exe $dir -Force
+          & "$dir\wsl-spawner.exe" hook install --yes
+          $code = $LASTEXITCODE
+          if ($code -eq 3) { 'hook install: in the policy, but Windows has not read it yet (its words are above)' }
+          elseif ($code -ne 0) { "hook install exited $code"; exit 1 }
+          $ini = [IO.File]::ReadAllText((Join-Path $env:SystemRoot 'System32\GroupPolicy\User\Scripts\scripts.ini'))
+          $ini
+          if ($ini -notmatch '(?m)^\d+CmdLine="[^"]*wsl-spawner ci[^"]*wsl-spawnerw\.exe"\s*$') { 'scripts.ini does not name the program in quotes'; exit 1 }
+          # Read back as the path it is, and last.
+          $h = & "$dir\wsl-spawner.exe" hook status --json | ConvertFrom-Json
+          if (-not $h.installed -or -not $h.last -or $h.command -notmatch 'wsl-spawner ci') { $h | ConvertTo-Json; 'the hook is not read back as the program in the folder with a blank'; exit 1 }
+          # What Windows took in, for the log: with quotes or without, the
+          # path must be whole, not cut at the blank.
+          $read = Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Logoff' -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.GetValue('Script') } | Where-Object { $_ }
+          "the sign-out scripts Windows took in for this account: $(if ($read) { $read -join ' | ' } else { '(none listed)' })"
+          if ($read -and -not ($read | Where-Object { $_ -match 'wsl-spawner ci.*wsl-spawnerw\.exe' })) { 'Windows took the path in cut at the blank'; exit 1 }
+          # Started as Windows starts it: the path with its blank, in quotes.
+          $p = Start-Process -FilePath "$dir\wsl-spawnerw.exe" -ArgumentList 'logoff' -PassThru
+          $null = $p.Handle
+          $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { "the hook's program exited $($p.ExitCode)"; exit 1 }
+          & "$dir\wsl-spawner.exe" hook remove --yes
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -and $code -ne 3) { "hook remove exited $code"; exit 1 }
+          if ((& "$dir\wsl-spawner.exe" hook status --json | ConvertFrom-Json).installed) { 'the hook is still installed'; exit 1 }
           exit 0
       - name: the start at sign-in, added, run as Windows runs it, and removed
         shell: pwsh

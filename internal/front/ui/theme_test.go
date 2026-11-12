@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -61,7 +62,7 @@ func TestPlainMarksKeepEachMarksWidth(t *testing.T) {
 	// takes the cells its mark took, and ⏎ becomes a word only where the
 	// words are not measured yet.
 	t.Cleanup(func() { SetMarks(MarksUnicode) })
-	lackingMarks := "✓✗↻▶⏎⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+	lackingMarks := "✓✗↻❯⏎⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 	wideMarks := "▪·…→←↑↓–—│╰●•›▌○"
 	if Marks(lackingMarks+wideMarks) != lackingMarks+wideMarks || Words(lackingMarks) != lackingMarks {
 		t.Fatal("marks swapped with the set left as it is")
@@ -140,6 +141,33 @@ func TestEveryColorReadsOnItsBackground(t *testing.T) {
 			if r := contrast(th.Faint, bg); r < 3 {
 				t.Errorf("dark %v: Faint at %.2f:1 on %v", dark, r, bg)
 			}
+		}
+	}
+}
+
+func TestASCIIMarksKeepASeparatorAndTheMarkApart(t *testing.T) {
+	// In ASCII a dot between words is a bar, not a full stop; a step
+	// waiting keeps its dot. The mark is six rows of fourteen cells, its
+	// underscore a cell short of the ring.
+	t.Cleanup(func() { SetMarks(MarksUnicode) })
+	SetMarks(MarksASCII)
+	if got := Sep(); got != "|" {
+		t.Errorf("the separator: %q", got)
+	}
+	if got := Marks("·"); got != "." {
+		t.Errorf("a step waiting: %q", got)
+	}
+	logo := NewTheme(true).Logo()
+	if len(logo) != 6 {
+		t.Fatalf("%d rows", len(logo))
+	}
+	for i, l := range logo {
+		plain := ansi.Strip(l)
+		if lipgloss.Width(plain) != 14 || strings.ContainsAny(plain, "▀▄█") {
+			t.Errorf("row %d: %q", i, plain)
+		}
+		if strings.Contains(plain, "_#") {
+			t.Errorf("row %d: the underscore meets the ring: %q", i, plain)
 		}
 	}
 }

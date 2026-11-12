@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -216,14 +217,20 @@ func (w *wizard) preview() {
 	default:
 		i18n.Set(i18n.Choose("auto", w.systemKorean))
 	}
+	// The wizard stays in the terminal's own colors, which it reads on:
+	// the colors chosen show on the preview's row, on their background.
+	w.th = ui.NewTheme(w.startDark)
+}
+
+// chosenTheme is the theme the colors page has chosen, for its preview.
+func (w wizard) chosenTheme() ui.Theme {
 	switch wizThemes[w.theme] {
 	case "dark":
-		w.th = ui.NewTheme(true)
+		return ui.NewTheme(true)
 	case "light":
-		w.th = ui.NewTheme(false)
-	default:
-		w.th = ui.NewTheme(w.startDark)
+		return ui.NewTheme(false)
 	}
+	return ui.NewTheme(w.startDark)
 }
 
 // key handles a key on the page open.
@@ -246,8 +253,16 @@ func (w wizard) key(key string) (tea.Model, tea.Cmd) {
 	}
 	choose := func(n *int, count, d int) { *n = (*n + d + count) % count }
 	switch key {
-	case "esc", "q":
+	case "q":
 		return w, tea.Quit
+	case "esc":
+		// Back a page, as on every other screen; out of the wizard from
+		// its first, where nothing is chosen yet.
+		if w.page == pWelcome {
+			return w, tea.Quit
+		}
+		w.page--
+		return w, nil
 	case "enter", "right", "l", "tab":
 		if w.page == pConfirm {
 			return w.apply()
@@ -375,16 +390,16 @@ func (w wizard) render() string {
 		return m.frame([]string{ui.Fg(w.th.Muted).Render(i18n.T("small"))})
 	}
 	t := w.th
-	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Muted).Render("  ·  "+i18n.T("wiz.title"))
+	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Muted).Render("  "+ui.Sep()+"  "+i18n.T("wiz.title"))
 	lines := []string{head, "", " " + w.progress(), ""}
 	var body []string
-	keys := [][2]string{{"⏎", i18n.T("wiz.key.next")}, {"←", i18n.T("wiz.key.back")}, {"esc", i18n.T("wiz.key.quit")}}
+	keys := [][2]string{{"⏎", i18n.T("wiz.key.next")}, {"←", i18n.T("wiz.key.back")}, {"q", i18n.T("wiz.key.quit")}}
 	switch {
 	case !w.read:
 		body = []string{"  " + ui.Fg(t.Muted).Render(i18n.T("loading"))}
 	case w.err != nil:
 		body = []string{"  " + ui.Fg(t.Cat[ui.CatCut]).Render("✗ "+errWords(w.err))}
-		keys = [][2]string{{"esc", i18n.T("wiz.key.quit")}}
+		keys = [][2]string{{"q", i18n.T("wiz.key.quit")}}
 	default:
 		body, keys = w.pageBody(keys)
 	}
@@ -413,7 +428,15 @@ func (w wizard) progress() string {
 		b.WriteString(" ")
 	}
 	n := min(w.page, pages-1) + 1
-	return b.String() + ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" · ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(i18n.T(fmt.Sprintf("wiz.page.%d", min(w.page, pages-1))))
+	// The last page is no question: the changes being made, then done.
+	title := i18n.T(fmt.Sprintf("wiz.page.%d", min(w.page, pages-1)))
+	switch {
+	case w.page == pApply && w.done:
+		title = i18n.T("wiz.page.done")
+	case w.page == pApply:
+		title = i18n.T("wiz.page.applying")
+	}
+	return b.String() + ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" "+ui.Sep()+" ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(title)
 }
 
 // option is one choice in a list: marked when chosen, in the tool's color
@@ -440,7 +463,7 @@ func (w wizard) pageBody(keys [][2]string) ([]string, [][2]string) {
 		body = append(body, para("wiz.welcome.1")...)
 		body = append(body, "")
 		body = append(body, para("wiz.welcome.2")...)
-		return body, [][2]string{{"⏎", i18n.T("wiz.key.start")}, {"esc", i18n.T("wiz.key.quit")}}
+		return body, [][2]string{{"⏎", i18n.T("wiz.key.start")}, {"q", i18n.T("wiz.key.quit")}}
 	case pLanguage:
 		body := para("wiz.lang.q")
 		body = append(body, "")
@@ -458,11 +481,13 @@ func (w wizard) pageBody(keys [][2]string) ([]string, [][2]string) {
 		for i := range wizThemes {
 			body = append(body, w.option(i == w.theme, w.themeName(i), ""))
 		}
-		// The colors as they are now, on a row of the screen.
-		body = append(body, "", "  "+ui.Fg(t.Muted).Render(i18n.T("wiz.preview")),
-			"    "+t.Dot(ui.CatRunning)+" "+ui.Fg(t.Cat[ui.CatRunning]).Render(i18n.T("state.running"))+"   "+
-				ui.Fg(t.Cat[ui.CatClean]).Render(i18n.T("end.clean"))+"   "+ui.Fg(t.Cat[ui.CatCut]).Render(i18n.T("end.cut"))+"   "+
-				ui.Fg(t.Cat[ui.CatWarn]).Render("! "+i18n.T("header.nohook")))
+		// The colors chosen, on a row of a screen in them: their own
+		// background behind it, the rest of the page in the terminal's.
+		c := w.chosenTheme()
+		row := " " + c.Dot(ui.CatRunning) + " " + ui.Fg(c.Cat[ui.CatRunning]).Render(i18n.T("state.running")) + "   " +
+			ui.Fg(c.Cat[ui.CatClean]).Render(i18n.T("end.clean")) + "   " + ui.Fg(c.Cat[ui.CatCut]).Render(i18n.T("end.cut")) + "   " +
+			ui.Fg(c.Cat[ui.CatWarn]).Render("! "+i18n.T("header.nohook")) + " "
+		body = append(body, "", "  "+ui.Fg(t.Muted).Render(i18n.T("wiz.preview")), "    "+ui.Highlight(row, previewBackground(c), lipgloss.Width(row)))
 		return body, append([][2]string{choose}, keys...)
 	case pMode:
 		body := para("wiz.mode.q")
@@ -502,12 +527,14 @@ func (w wizard) pageBody(keys [][2]string) ([]string, [][2]string) {
 		}
 		return body, append([][2]string{{"↑↓", i18n.T("wiz.key.choose")}, {"space", i18n.T("wiz.key.level")}}, keys...)
 	case pHook:
-		body := para("wiz.hook.q")
-		body = append(body, "")
+		// Installed: said, not asked, as there is nothing to choose.
 		if w.hookIn {
-			body = append(body, "  "+ui.Fg(t.Cat[ui.CatClean]).Render("✓ "+i18n.T("wiz.hook.in")))
+			body := para("wiz.hook.is")
+			body = append(body, "", "  "+ui.Fg(t.Cat[ui.CatClean]).Render("✓ "+i18n.T("wiz.hook.in")))
 			return body, keys
 		}
+		body := para("wiz.hook.q")
+		body = append(body, "")
 		body = append(body, w.option(w.install, i18n.T("wiz.hook.install"), "  "+i18n.T("wiz.hook.install.note")),
 			w.option(!w.install, i18n.T("wiz.hook.later"), "  "+i18n.T("wiz.hook.later.note")))
 		return body, append([][2]string{choose}, keys...)
@@ -517,7 +544,7 @@ func (w wizard) pageBody(keys [][2]string) ([]string, [][2]string) {
 		for _, s := range w.changes() {
 			body = append(body, "  "+ui.Fg(t.Mark).Render("•")+" "+s.what)
 		}
-		return body, [][2]string{{"⏎", i18n.T("wiz.key.apply")}, {"←", i18n.T("wiz.key.back")}, {"esc", i18n.T("wiz.key.quit")}}
+		return body, [][2]string{{"⏎", i18n.T("wiz.key.apply")}, {"←", i18n.T("wiz.key.back")}, {"q", i18n.T("wiz.key.quit")}}
 	}
 	// The last page: each change as it is made.
 	var body []string
@@ -603,4 +630,13 @@ func SetupSnapshot(c api.Client, width, height int, dark bool, keys []string) st
 	// The marks swapped as View swaps them, so a picture in plain or ASCII
 	// marks is what the program draws.
 	return ui.Marks(w.render())
+}
+
+// previewBackground is the background a theme is made for, behind the
+// colors page's preview: a dark terminal's or a light one's.
+func previewBackground(t ui.Theme) color.Color {
+	if t.Dark {
+		return lipgloss.Color("#16161D")
+	}
+	return lipgloss.Color("#FFFFFF")
 }

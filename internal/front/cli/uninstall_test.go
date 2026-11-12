@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,7 +85,7 @@ func installed(t *testing.T, folder string) *fakeInstall {
 	fi.f.Script = func(distro, _, script string) (string, error) {
 		switch {
 		case script == inside.ProbeScript():
-			return "probe=1\nstart_script=" + inside.StartScriptMark + "1\nend=1\n", nil
+			return "probe=1\nstart_script=" + inside.StartScriptMark + inside.StartScriptVersion + "\nend=1\n", nil
 		case strings.Contains(script, `rm -rf "$R/usr/local/lib/wsl-spawner"`):
 			fi.takenOut = append(fi.takenOut, distro)
 			return "ok=1\n", nil
@@ -244,10 +245,54 @@ func TestAHookThatStaysStopsTheUninstallBeforeAnythingGoes(t *testing.T) {
 	fi := installed(t, "wsl-spawner")
 	fi.declined = true
 	code, _, errOut := fi.run(t, "", "uninstall", "--yes")
-	if code != exitFail || !strings.Contains(errOut, "the sign-out hook stays") || !strings.Contains(errOut, "nothing was removed") {
-		t.Fatalf("exit %d: %s", code, errOut)
+	// One thing to do, the uninstall's own: no hint after a hint.
+	want := "wsl-spawner: nothing was removed: the administrator's permission was not given; wsl-spawner uninstall asks again\n"
+	if code != exitFail || errOut != want {
+		t.Fatalf("exit %d: %q", code, errOut)
 	}
 	fi.untouched(t)
+}
+
+func TestAStandardUserIsToldBeforeTheQuestionHowTheHookComesOut(t *testing.T) {
+	// The program is in the standard user's folder: Windows would run it
+	// with the administrator's rights they type. Refused before the plan
+	// and the question, with the editor as the way out; nothing goes.
+	fi := installed(t, "wsl-spawner")
+	fi.a.PC.StandardUser = func() bool { return true }
+	fi.a.PC.WhoElseCanChange = func(path string, trustUser bool) (string, string, error) { return `PC\ann`, path, nil }
+	code, out, errOut := fi.run(t, "y\n", "uninstall")
+	if code != exitFail || strings.Contains(out+errOut, "[y/N]") || !strings.Contains(errOut, "nothing was removed: the sign-out hook stays, as PC\\ann can change") ||
+		!strings.Contains(errOut, "an administrator can take it out in gpedit.msc") || strings.Contains(errOut, "tries again") {
+		t.Fatalf("exit %d: %s%s", code, out, errOut)
+	}
+	fi.untouched(t)
+}
+
+func TestUninstallKeepsAProgramOnlyAnAdministratorMayRemove(t *testing.T) {
+	// An administrator's install under Program Files: the person may not
+	// delete its files. What wsl-spawner put on the PC for them goes; the
+	// program, its folder and the PATH stay, said as the administrator's.
+	fi := installed(t, "wsl-spawner")
+	fi.a.PC.CanDelete = func(string) error { return fs.ErrPermission }
+	code, out, errOut := fi.run(t, "y\n", "uninstall")
+	if code != exitOK || !strings.Contains(errOut, "keeps    the program in "+fi.dir+": wsl-spawner uninstall in a terminal opened as administrator removes it") || !strings.Contains(errOut, "Take these out? [y/N]") {
+		t.Fatalf("exit %d: %s%s", code, out, errOut)
+	}
+	if fi.entry != "" || len(gpo.Logoff(fi.scripts)) != 1 || !there(fi.exe) || !there(filepath.Join(fi.dir, "wsl-spawnerw.exe")) || len(fi.deleted) != 0 || len(fi.wrote) != 0 {
+		t.Fatalf("entry %q, scripts %q, deleted %q, PATH written %q", fi.entry, fi.scripts, fi.deleted, fi.wrote)
+	}
+	if !strings.Contains(out, "the program stays in "+fi.dir+": wsl-spawner uninstall in a terminal opened as administrator removes it") {
+		t.Fatalf("%s", out)
+	}
+	// Run as administrator, as that line says: the program goes, whatever
+	// is answered for its files; the removal itself would say what stays.
+	fi = installed(t, "wsl-spawner")
+	fi.a.PC.CanDelete = func(string) error { return fs.ErrPermission }
+	fi.a.PC.Elevated = func() bool { return true }
+	code, out, errOut = fi.run(t, "y\n", "uninstall")
+	if code != exitOK || strings.Contains(errOut, "keeps    the program") || len(fi.deleted) != 1 || there(filepath.Join(fi.dir, "wsl-spawnerw.exe")) {
+		t.Fatalf("exit %d, removals %q: %s%s", code, fi.deleted, out, errOut)
+	}
 }
 
 func TestAHookThatCannotComeOutStopsTheUninstallBeforeWindowsAsks(t *testing.T) {
@@ -446,20 +491,36 @@ func TestUninstallKeepsTheProgramWhenThePathCannotBeWritten(t *testing.T) {
 func TestUninstallLeavesAScoopInstallToScoop(t *testing.T) {
 	// Scoop's apps\wsl-spawner\current, with its manifest beside the
 	// program.
+	// What wsl-spawner put on the PC goes; the program is Scoop's to
+	// remove; the settings stay unless --purge is given, as for any other
+	// install.
+	for _, purge := range []bool{false, true} {
+		fi := installed(t, filepath.Join("scoop", "apps", "wsl-spawner", "current"))
+		write(t, filepath.Join(fi.dir, "scoop-manifest.json"), "{}")
+		args := []string{"uninstall", "--yes"}
+		if purge {
+			args = append(args, "--purge")
+		}
+		code, out, errOut := fi.run(t, "", args...)
+		if code != exitOK || fi.entry != "" || len(gpo.Logoff(fi.scripts)) != 1 || !there(fi.exe) || len(fi.deleted) != 0 {
+			t.Fatalf("purge %v: exit %d: %s%s", purge, code, out, errOut)
+		}
+		if !strings.Contains(out, "scoop uninstall wsl-spawner removes the program") || there(filepath.Join(fi.settings, "config.toml")) == purge {
+			t.Fatalf("purge %v: %s", purge, out)
+		}
+	}
+	// With no settings and no history there, nothing is said of them, and
+	// no empty line stands in their place.
 	fi := installed(t, filepath.Join("scoop", "apps", "wsl-spawner", "current"))
 	write(t, filepath.Join(fi.dir, "scoop-manifest.json"), "{}")
-	if code, _, errOut := fi.run(t, "", "uninstall", "--yes"); code != exitFail || !strings.Contains(errOut, "installed with Scoop") {
-		t.Fatalf("exit %d: %s", code, errOut)
+	for _, d := range []string{fi.settings, fi.state} {
+		if err := os.RemoveAll(d); err != nil {
+			t.Fatal(err)
+		}
 	}
-	fi.untouched(t)
-	// With --purge, what wsl-spawner put on the PC goes, and the settings;
-	// the program is Scoop's to remove.
-	code, out, errOut := fi.run(t, "", "uninstall", "--purge", "--yes")
-	if code != exitOK || fi.entry != "" || len(gpo.Logoff(fi.scripts)) != 1 || !there(fi.exe) || len(fi.deleted) != 0 {
-		t.Fatalf("exit %d: %s%s", code, out, errOut)
-	}
-	if !strings.Contains(out, "scoop uninstall wsl-spawner removes the program") {
-		t.Fatalf("%s", out)
+	_, out, _ := fi.run(t, "", "uninstall", "--yes")
+	if strings.Contains(out, "\n\n") || !strings.Contains(out, "scoop uninstall wsl-spawner removes the program") {
+		t.Fatalf("%q", out)
 	}
 }
 

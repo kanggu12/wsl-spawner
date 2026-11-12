@@ -50,6 +50,16 @@ func proc(name string) map[string]string {
 	}
 }
 
+// probeOwnDocker gives a made-up root a Docker daemon of its own, as the
+// probe reads it: a pid file naming a dockerd. For the probe alone, which
+// only reads it: a stop sends that number TERM, and it may be a process of
+// this machine's.
+func probeOwnDocker(files map[string]string) map[string]string {
+	files["var/run/docker.pid"] = "4321\n"
+	files["proc/4321/comm"] = "dockerd\n"
+	return files
+}
+
 // probe runs the probe script under root with only the tools in dir.
 func probe(t *testing.T, dir, root string) (string, Probe) {
 	t.Helper()
@@ -144,6 +154,30 @@ func TestProbeReadsSystemdAndTheUnits(t *testing.T) {
 	}
 }
 
+func TestProbeSaysASystemdThatDoesNotAnswer(t *testing.T) {
+	// systemd is this distribution's init, and does not answer in its
+	// time: it says nothing, and timeout ends the call with 124. That is
+	// no distribution without systemd.
+	dir := shtest.Tools(t)
+	shtest.Stub(t, dir, "systemctl", `case "$1" in
+is-system-running) exit 124 ;;
+list-units) exit 124 ;;
+show) exit 124 ;;
+*) echo "systemctl: not expected: $*" >&2; exit 64 ;;
+esac`)
+	files := proc("systemd")
+	files["run/systemd/system/"] = ""
+	out, p := probe(t, dir, tree(t, files))
+	if p.Systemd != "noanswer" {
+		t.Fatalf("systemd %q\n%s", p.Systemd, out)
+	}
+	// Where its folder in /run is not, there is no systemd, as before.
+	_, p = probe(t, dir, tree(t, proc("init")))
+	if p.Systemd != "" {
+		t.Fatalf("systemd %q with no systemd", p.Systemd)
+	}
+}
+
 func TestProbeReadsInteropOnlyWhenItIsOn(t *testing.T) {
 	files := proc("systemd")
 	files["proc/sys/fs/binfmt_misc/WSLInterop"] = "disabled\n"
@@ -208,7 +242,7 @@ func TestProbeReadsDockerContainers(t *testing.T) {
 		// Run with --rm: its engine removes it as it stops.
 		"ddd444\t/once\trunning\tno\t<no value>\tbusybox\t<no value>\t\ttrue",
 	})
-	out, p := probe(t, dir, tree(t, proc("systemd")))
+	out, p := probe(t, dir, tree(t, probeOwnDocker(proc("systemd"))))
 	if !p.Engines["docker"] || p.LiveRestore || len(p.Containers) != 4 || !p.Containers[3].AutoRemove || p.Containers[0].AutoRemove {
 		t.Fatalf("%+v\n%s", p, out)
 	}
@@ -248,7 +282,7 @@ func TestProbeReadsAContainerWhoseProjectLabelHoldsATabOrALineBreak(t *testing.T
 	esac ;;
 *) echo "docker: not expected: $*" >&2; exit 64 ;;
 esac`)
-	out, p := probe(t, dir, tree(t, proc("systemd")))
+	out, p := probe(t, dir, tree(t, probeOwnDocker(proc("systemd"))))
 	if len(p.Containers) != 3 {
 		t.Fatalf("%+v\n%s", p.Containers, out)
 	}
@@ -269,16 +303,61 @@ esac`)
 func TestProbeSaysADockerThatDoesNotAnswer(t *testing.T) {
 	dir := shtest.Tools(t)
 	docker(t, dir, false, "false", []string{"aaa111\t/web\trunning\tno\t\tx\t"})
-	_, p := probe(t, dir, tree(t, proc("systemd")))
+	_, p := probe(t, dir, tree(t, probeOwnDocker(proc("systemd"))))
 	if up, ok := p.Engines["docker"]; !ok || up || len(p.Containers) != 0 {
 		t.Fatalf("%+v", p)
+	}
+}
+
+func TestProbeLeavesADockerWhoseDaemonIsNotThisDistributionsAlone(t *testing.T) {
+	// The docker command answers, but no daemon of this distribution's is
+	// there: no unit of Docker's under systemd, and no pid file naming a
+	// dockerd, or one naming another program. Docker Desktop's WSL
+	// integration is so. It is said as another's, not asked anything, and
+	// none of its containers is listed as this distribution's.
+	for name, files := range map[string]map[string]string{
+		"no daemon of its own": proc("systemd"),
+		"a pid file of another program's": func() map[string]string {
+			f := proc("systemd")
+			f["var/run/docker.pid"] = "4321\n"
+			f["proc/4321/comm"] = "sleep\n"
+			return f
+		}(),
+		"systemd without a unit of Docker's": func() map[string]string {
+			f := proc("systemd")
+			f["run/systemd/system/"] = ""
+			return f
+		}(),
+	} {
+		dir := shtest.Tools(t)
+		asked := filepath.Join(dir, "docker.asked")
+		shtest.Stub(t, dir, "docker", `echo "$*" >>'`+asked+`'
+case "$1" in info) exit 0 ;; ps) echo aa11 ;; *) echo 'aa11	/web	running	always			x		false' ;; esac`)
+		shtest.Stub(t, dir, "systemctl", `case "$*" in
+is-system-running) echo running ;;
+'show -p LoadState --value '*) echo not-found ;;
+'is-active '*) echo inactive; exit 4 ;;
+list-units*) ;;
+*) echo "systemctl: not expected: $*" >&2; exit 64 ;;
+esac`)
+		out, p := probe(t, dir, tree(t, files))
+		if !strings.Contains(out, "\ndocker=foreign\n") || len(p.Containers) != 0 || p.EngineState("docker") != EngineForeign {
+			t.Errorf("%s: %+v\n%s", name, p, out)
+		}
+		// Not this distribution's engine: not in Engines, which a plan reads.
+		if _, ok := p.Engines["docker"]; ok {
+			t.Errorf("%s: engines %v", name, p.Engines)
+		}
+		if _, err := os.Stat(asked); err == nil {
+			t.Errorf("%s: docker was asked %q", name, lines(t, asked))
+		}
 	}
 }
 
 func TestProbeReadsLiveRestoreAndNoContainers(t *testing.T) {
 	dir := shtest.Tools(t)
 	docker(t, dir, true, "true", nil)
-	_, p := probe(t, dir, tree(t, proc("systemd")))
+	_, p := probe(t, dir, tree(t, probeOwnDocker(proc("systemd"))))
 	if !p.Engines["docker"] || !p.LiveRestore || len(p.Containers) != 0 {
 		t.Fatalf("%+v", p)
 	}
@@ -302,7 +381,7 @@ esac`)
 
 func TestProbeReadsWhatWslSpawnerKeeps(t *testing.T) {
 	files := proc("systemd")
-	files["usr/local/lib/wsl-spawner/start.sh"] = StartScriptMark + "1\n"
+	files["usr/local/lib/wsl-spawner/start.sh"] = StartScriptMark + StartScriptVersion + "\n"
 	files["etc/wsl-spawner/pre-stop.d/10-save-world"] = "#!/bin/sh\n"
 	files["etc/wsl-spawner/pre-stop.d/README"] = "not run: not a program\n"
 	files["var/lib/wsl-spawner/runs"] = "1700000000 0f0e0d0c-0b0a-4908-8706-050403020100@100\n1700000500 0f0e0d0c-0b0a-4908-8706-050403020100@4242\n"
@@ -342,10 +421,49 @@ func TestProbeReadsStopUnitsSavedOnWindowsByTheirNames(t *testing.T) {
 	}
 }
 
+func TestProbeSaysHowEachStopUnitStands(t *testing.T) {
+	// A stop stops only the listed units that run. Each is said with
+	// whether systemd has it and whether it runs now: a typo, or a note
+	// on the line, is a name systemd does not have (one it refuses says
+	// nothing and fails); a unit still starting is not stopped either.
+	dir := shtest.Tools(t)
+	shtest.Stub(t, dir, "systemctl", `case "$*" in
+is-system-running) echo running ;;
+'list-units --failed --plain --no-legend') ;;
+'show -p LoadState --value minecraft.service' | 'show -p LoadState --value postgresql.service') echo loaded ;;
+'show -p LoadState --value minecarft.service') echo not-found ;;
+'show -p LoadState --value postgresql.service # db') echo 'Invalid unit name' >&2; exit 1 ;;
+'show -p LoadState --value '*) echo not-found ;;
+'is-active minecraft.service') echo active ;;
+'is-active postgresql.service') echo activating; exit 3 ;;
+'is-active '*) echo inactive; exit 4 ;;
+'is-enabled '*) echo disabled; exit 1 ;;
+*) echo "systemctl: not expected: $*" >&2; exit 64 ;;
+esac`)
+	files := proc("systemd")
+	files["run/systemd/system/"] = ""
+	files["etc/wsl-spawner/stop-units"] = "minecraft.service\npostgresql.service\nminecarft.service\npostgresql.service # db\n"
+	out, p := probe(t, dir, tree(t, files))
+	want := []string{"minecraft.service", "postgresql.service", "minecarft.service", "postgresql.service # db"}
+	if !slices.Equal(p.StopUnits, want) {
+		t.Fatalf("stop units %q\n%s", p.StopUnits, out)
+	}
+	for name, st := range map[string]StopUnitState{
+		"minecraft.service":       {Load: "loaded", Active: "active"},
+		"postgresql.service":      {Load: "loaded", Active: "activating"},
+		"minecarft.service":       {Load: "not-found", Active: "inactive"},
+		"postgresql.service # db": {Load: "not-found", Active: "inactive"},
+	} {
+		if got := p.StopUnitStates[name]; got != st {
+			t.Errorf("%s: %+v, want %+v\n%s", name, got, st, out)
+		}
+	}
+}
+
 func TestLastEnd(t *testing.T) {
 	const boot = "b"
 	now := RunID(boot, "300")
-	base := Probe{BootID: boot, InitStart: "300", StartScript: StartScriptMark + "1"}
+	base := Probe{BootID: boot, InitStart: "300", StartScript: StartScriptMark + StartScriptVersion}
 	// Each start noted 100 s after the one before it, the first at 0.
 	runs := func(ids ...string) []Run {
 		var rs []Run
@@ -438,4 +556,97 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestWhatADistributionSaysIsMadeSafeToShow(t *testing.T) {
+	// A hook named with an escape sequence, a container with a control
+	// character in its name and a unit named so: what a terminal obeys never
+	// reaches the screen, the check or the history as it is.
+	out := "probe=1\n" +
+		"hook=10\x1b]52;c;Zm9v\x07ok\n" +
+		"systemd=run\x1b[2Jning\n" +
+		"failed=bad\x1b[31m.service\n" +
+		"unit=x\x1b[1m.service\tactive\x1b[0m\tenabled\n" +
+		"container=docker\tabc\t/n\x1b[2Jame\trunning\tno\t\ti\x1bmg\t\t8080:80/tcp,\n" +
+		"bring=docker abc na\x1bme\n" +
+		"end=1\n"
+	p, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(p.Hooks, "|") + p.Systemd + strings.Join(p.Failed, "|")
+	for k, u := range p.Units {
+		all += k + u.Active + u.Enabled
+	}
+	for _, c := range p.Containers {
+		all += c.Name + c.Image
+	}
+	for _, b := range p.Bring {
+		all += b.Name
+	}
+	if strings.ContainsAny(all, "\x1b\x07") {
+		t.Fatalf("a control character got through: %q", all)
+	}
+	if len(p.Hooks) != 1 || p.Hooks[0] != "10?]52;c;Zm9v?ok" || p.Containers[0].Name != "n?[2Jame" || p.Containers[0].Image != "i?mg" {
+		t.Fatalf("%q %+v", p.Hooks, p.Containers)
+	}
+	// A line of the stop script, the same.
+	l, ok := ParseStopLine("hook=10\x1b]0;x\x07\tstart")
+	if !ok || l.Hook != "10?]0;x?" {
+		t.Fatalf("%+v %v", l, ok)
+	}
+	if l, _ := ParseStopLine("end=cl\x1b[2Jean"); l.Result != "cl?[2Jean" {
+		t.Fatalf("%+v", l)
+	}
+}
+
+func TestAProbeNeverStartsADockerThatSleepsBehindItsSocket(t *testing.T) {
+	// Docker's packages leave docker.socket listening when the daemon is
+	// stopped: any docker command, `docker info` too, starts it again. A
+	// look changes nothing, so it does not ask: the engine is asleep, which
+	// is no daemon that does not answer.
+	for _, tc := range []struct {
+		name    string
+		service string
+		asks    bool
+		wantUp  string
+	}{
+		{"service stopped, socket listening", "inactive", false, "docker=asleep"},
+		{"service failed, socket listening", "failed", false, "docker=asleep"},
+		// Where the daemon runs or starts, it is asked as before.
+		{"service running", "active", true, "docker=up"},
+		{"service starting", "activating", true, "docker=up"},
+	} {
+		dir := shtest.Tools(t)
+		asked := filepath.Join(dir, "docker.asked")
+		shtest.Stub(t, dir, "docker", `echo "$*" >>'`+asked+`'
+case "$1 $2" in
+'info ') exit 0 ;;
+'info --format') echo false ;;
+'ps -aq') ;;
+*) exit 64 ;;
+esac`)
+		shtest.Stub(t, dir, "systemctl", `case "$*" in
+is-system-running) echo running ;;
+'list-units --failed --plain --no-legend') ;;
+'is-active docker.socket') echo active ;;
+'is-active docker.service') echo `+tc.service+`; exit 3 ;;
+'show -p LoadState --value docker.service' | 'show -p LoadState --value docker.socket') echo loaded ;;
+'show -p LoadState --value '*) echo not-found ;;
+'is-active '* | 'is-enabled '*) echo unknown; exit 3 ;;
+*) echo "systemctl: not expected: $*" >&2; exit 64 ;;
+esac`)
+		// Docker's units are there, as its packages put them: its daemon is
+		// this distribution's.
+		files := proc("systemd")
+		files["run/systemd/system/"] = ""
+		out, _ := probe(t, dir, tree(t, files))
+		if !strings.Contains(out, tc.wantUp+"\n") {
+			t.Errorf("%s: no %q in\n%s", tc.name, tc.wantUp, out)
+		}
+		_, err := os.Stat(asked)
+		if (err == nil) != tc.asks {
+			t.Errorf("%s: docker asked = %v, want %v", tc.name, err == nil, tc.asks)
+		}
+	}
 }

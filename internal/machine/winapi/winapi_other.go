@@ -97,3 +97,9 @@ func OpenReport(path string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// WhoElseCanChange needs Windows: its access lists are what it reads.
+func WhoElseCanChange(string, bool) (string, string, error) { return "", "", ErrNotWindows }
+
+// StandardUser is false off Windows: there is no UAC to ask.
+func StandardUser() bool { return false }

@@ -10,7 +10,7 @@ import (
 // realPaths are where the scripts write in a distribution. The tests run
 // them under a made-up root; one that reached this machine's own would
 // leave one of these behind.
-var realPaths = []string{"/var/lib/wsl-spawner", "/usr/local/lib/wsl-spawner", "/etc/wsl-spawner",
+var realPaths = []string{"/var/lib/wsl-spawner", "/usr/local/lib/wsl-spawner", "/etc/wsl-spawner", "/run/wsl-spawner",
 	"/etc/systemd/system/" + StartUnit, "/etc/systemd/system/" + KeepAliveUnit,
 	"/run/systemd/system/docker.service.d/zz-wsl-spawner.conf", "/run/systemd/system/snap.docker.dockerd.service.d/zz-wsl-spawner.conf"}
 

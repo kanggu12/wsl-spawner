@@ -76,6 +76,11 @@ type Hook struct {
 	// last, so nothing else decides it.
 	PowerShell     int
 	PowerShellLast bool
+	// Changeable are the programs a sign-out hook of wsl-spawner's starts,
+	// this copy's or another's, that someone beyond the person at this PC,
+	// the system and the administrators can change, or put one in the place
+	// of. The hook runs for every user of the PC, as whoever signs out.
+	Changeable []Changeable
 	// Copies are other copies' sign-out hooks, whose program is there, run
 	// while this copy has none: they stop the distributions and WSL as this
 	// copy's would.
@@ -87,8 +92,20 @@ type Hook struct {
 	// MaxWait is how long Windows waits for the sign-out scripts; 0 is as
 	// long as they take.
 	MaxWait time.Duration
+	// Standard is set when the person is a standard user: a hook of theirs
+	// has an administrator's own install for its way out.
+	Standard bool
 	// Err is why the scripts could not be read.
 	Err error
+}
+
+// Changeable is a program a sign-out hook starts that another user can
+// change: Program is it, By who may, At the file or folder they may change it
+// by; Copy is set when the hook is another copy's, which that copy takes
+// out.
+type Changeable struct {
+	Program, By, At string
+	Copy            bool
 }
 
 // LastStop is wsl-spawner's newest stop of a distribution in the history:
@@ -173,6 +190,23 @@ func stopping(in Inputs) Group {
 	default:
 		g.Items = append(g.Items, Item{Mark: Warn, Key: "check.hook.none", Do: "check.hook.do.install"})
 	}
+	// What a hook starts is another user's to change: worth more than where
+	// it stands among the scripts, and said for each, by the program itself
+	// or the folder that holds it, with the way out that fits: another
+	// copy's own, or, for a standard user, an administrator's install.
+	for _, c := range h.Changeable {
+		it := Item{Mark: Bad, Key: "check.hook.writable", Args: []any{c.By, c.Program}, Do: "check.hook.do.writable"}
+		if c.At != c.Program {
+			it.Key, it.Args = "check.hook.writable.at", []any{c.By, c.At, c.Program}
+		}
+		switch {
+		case c.Copy:
+			it.Do = "check.hook.do.writable.copy"
+		case h.Standard:
+			it.Do = "check.hook.do.writable.std"
+		}
+		g.Items = append(g.Items, it)
+	}
 	for _, s := range h.StopsWSL {
 		g.Items = append(g.Items, Item{Mark: Warn, Key: "check.hook.otherwsl", Args: []any{s}, Do: "check.hook.do.other"})
 	}
@@ -251,6 +285,10 @@ func distro(in Inputs, d distros.Distro) Group {
 	switch p.Systemd {
 	case "":
 		add(Item{Mark: Warn, Key: "check.d.nosystemd", Do: "check.d.do.systemd", DoArgs: []any{d.Name}})
+	case inside.SystemdNoAnswer:
+		// It runs, and did not answer the probe in its time: busy or stuck,
+		// which a stop's own calls to it meet too.
+		add(Item{Mark: Warn, Key: "check.d.systemdsilent"})
 	case "running":
 		add(Item{Mark: OK, Key: "check.d.systemd"})
 	case "degraded":
@@ -261,8 +299,12 @@ func distro(in Inputs, d distros.Distro) Group {
 	if !p.SetUp() {
 		add(Item{Mark: Info, Key: "check.d.notsetup", Do: "check.d.do.setup", DoArgs: []any{d.Name}})
 		fromHistory()
-	} else if p.StartScript != inside.StartScriptMark+inside.StartScriptVersion {
+	} else if p.StartScriptOlder() {
 		add(Item{Mark: Warn, Key: "check.d.oldsetup", Do: "check.d.do.setup", DoArgs: []any{d.Name}})
+	} else if p.StartScriptNewer() {
+		// A later wsl-spawner put it, and this one came back since: it is
+		// left as it is, and said for the look.
+		add(Item{Mark: Info, Key: "check.d.newsetup"})
 	}
 	end, prev := p.LastEnd()
 	switch end {
@@ -286,9 +328,40 @@ func distro(in Inputs, d distros.Distro) Group {
 	case p.KeptRunning():
 		add(Item{Mark: OK, Key: "check.d.kept"})
 	}
+	// The units stop-units names that a stop passes by, as it stops only
+	// those that run: one systemd does not have (a typo, or a note on its
+	// line) is worth a look; those that do not run now are said for the
+	// look, each with its state. One whose state was not read is not said.
+	var missing, idle []string
+	for _, u := range p.StopUnits {
+		st, ok := p.StopUnitStates[u]
+		switch {
+		case !ok || st.Load == "":
+			// Not read: nothing is said of it either way.
+		case st.Load == "not-found":
+			missing = append(missing, u)
+		case st.Active != "" && st.Active != "active":
+			idle = append(idle, u+" ("+st.Active+")")
+		}
+	}
+	if len(missing) > 0 {
+		add(Item{Mark: Warn, Key: "check.d.unitsmissing", Args: []any{strings.Join(missing, ", ")}, Do: "check.d.do.units"})
+	}
+	if len(idle) > 0 {
+		add(Item{Mark: Info, Key: "check.d.unitsidle", Args: []any{strings.Join(idle, ", ")}})
+	}
 	for _, e := range []string{"docker", "podman"} {
-		if up, ok := p.Engines[e]; ok && !up {
+		switch p.EngineState(e) {
+		case inside.EngineDown:
 			add(Item{Mark: Warn, Key: "check.d.enginedown", Args: []any{e}})
+		case inside.EngineAsleep:
+			// Stopped by hand, its socket listening: nothing is wrong, and
+			// nothing of it runs. Said for the look.
+			add(Item{Mark: Info, Key: "check.d.engineasleep", Args: []any{e}})
+		case inside.EngineForeign:
+			// Another's daemon, Docker Desktop's or another engine's: left
+			// alone, which is nothing to do. Said for the look.
+			add(Item{Mark: Info, Key: "check.d.engineforeign", Args: []any{e}})
 		}
 	}
 	if p.Engines["docker"] && p.LiveRestore {

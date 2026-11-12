@@ -36,7 +36,7 @@ func pc(t *testing.T, stopLines ...string) (*app.App, *wsl.Fake) {
 	}
 	f.Script = func(distro, user, script string) (string, error) {
 		if script == inside.ProbeScript() {
-			return "probe=1\nstart_script=" + inside.StartScriptMark + "1\ndocker=up\n" +
+			return "probe=1\nstart_script=" + inside.StartScriptMark + inside.StartScriptVersion + "\ndocker=up\n" +
 				"container=docker\taaa\t/web\trunning\tunless-stopped\t60\tnginx\tsite\n" +
 				"container=docker\tbbb\t/job\texited\tno\t\tbusybox\t\nend=1\n", nil
 		}
@@ -208,6 +208,33 @@ func TestAStopThatRanOutOfTimeExitsThree(t *testing.T) {
 	a, _ := pc(t, "step=docker\tstart\t1", "step=docker\tdone\t124\t300", "end=limit")
 	out, errOut, code := cli(t, a, false, "stop", "--yes", "--all")
 	if code != exitAttention || !strings.Contains(out, "out of time") || !strings.Contains(errOut, "did not get every step in its time") {
+		t.Fatalf("exit %d:\n%s\n%s", code, out, errOut)
+	}
+}
+
+func TestAStopOfADistributionAnotherStopIsStoppingSaysSo(t *testing.T) {
+	// Another stop of it runs, by hand or the sign-out hook's: this one
+	// says so, ends nothing, records no stop of its own, and exits as done,
+	// as the other stop does the stopping.
+	a, f := pc(t, "end=busy")
+	out, errOut, code := cli(t, a, false, "stop", "--yes", "Ubuntu-24.04")
+	if code != exitOK || !strings.Contains(out, "another stop of Ubuntu-24.04 is running") {
+		t.Fatalf("exit %d:\n%s\n%s", code, out, errOut)
+	}
+	if slices.Contains(f.CallList(), "terminate:Ubuntu-24.04") {
+		t.Fatalf("calls %q", f.CallList())
+	}
+	if all, err := history.Open(a.Dir).All(); err != nil || len(all) != 0 {
+		t.Fatalf("history %+v %v", all, err)
+	}
+}
+
+func TestANoteThatCouldNotBeWrittenIsSaidAsAStepThatFailed(t *testing.T) {
+	// A full disk inside: the stop failed on its own notes, which it says
+	// as a step of its own after its plan, and the exit code says so.
+	a, _ := pc(t, "plan=sync\t", "step=record\tdone\t1\t0", "step=sync\tstart", "step=sync\tdone\t0\t0", "end=failed")
+	out, errOut, code := cli(t, a, false, "stop", "--yes", "--all")
+	if code != exitAttention || !strings.Contains(out, "Ubuntu-24.04  notes in /var/lib/wsl-spawner  failed with 1, 0 s") {
 		t.Fatalf("exit %d:\n%s\n%s", code, out, errOut)
 	}
 }

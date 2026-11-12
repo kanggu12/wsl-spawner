@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kanggu12/wsl-spawner/internal/core/plain"
 )
 
 //go:embed stop.sh
@@ -61,6 +63,10 @@ const (
 	StepDocker = "docker"
 	StepPodman = "podman"
 	StepSync   = "sync"
+	// StepRecord is a file of the stop's own that could not be written:
+	// the list of what comes back, or the record of the stop. It is said
+	// only then, as a step that failed.
+	StepRecord = "record"
 )
 
 // StopLine is one line the stop script printed.
@@ -87,7 +93,14 @@ func ParseStopLine(line string) (StopLine, bool) {
 	if !ok {
 		return StopLine{}, false
 	}
+	// What a distribution says is shown: a hook's name or an end it makes
+	// up may hold what a terminal obeys. The tabs are the fields': made safe
+	// after they are split.
 	f := strings.Split(value, "\t")
+	for i := range f {
+		f[i] = plain.Text(f[i])
+	}
+	value = plain.Text(value)
 	num := func(i int) int {
 		if i >= len(f) {
 			return 0

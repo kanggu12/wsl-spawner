@@ -45,13 +45,21 @@ type (
 		SetUp       bool            `json:"set_up"`
 		LiveRestore bool            `json:"docker_live_restore"`
 		Engines     map[string]bool `json:"engines"`
-		Containers  []Container     `json:"containers"`
-		Hooks       []string        `json:"hooks"`
-		Failed      []string        `json:"failed_units"`
-		LastEnd     End             `json:"last_end"`
-		Bring       []string        `json:"to_bring_back"`
-		// StopUnits are the units it stops before the containers.
-		StopUnits []string `json:"stop_units"`
+		// EngineStates says each engine found by a word: "up", "down",
+		// "asleep" (Docker stopped by hand, its socket listening) or
+		// "foreign" (a docker whose daemon is not this distribution's,
+		// left alone and not among Engines).
+		EngineStates map[string]string `json:"engine_states"`
+		Containers   []Container       `json:"containers"`
+		Hooks        []string          `json:"hooks"`
+		Failed       []string          `json:"failed_units"`
+		LastEnd      End               `json:"last_end"`
+		Bring        []string          `json:"to_bring_back"`
+		// StopUnits are the units it stops before the containers: those
+		// stop-units names that run now. StopUnitsSkipped are the ones it
+		// names that a stop passes by: not running, or not systemd's.
+		StopUnits        []string `json:"stop_units"`
+		StopUnitsSkipped []string `json:"stop_units_skipped"`
 		// LastStop is wsl-spawner's last stop of it, nil when there was none.
 		LastStop *LastStop `json:"last_stop"`
 		// Resumed is what came back at its last start, at ResumedAt.

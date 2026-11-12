@@ -124,13 +124,15 @@ func (l look) bold(s string) string {
 }
 
 // hinted is an error with what to do about it. Plain, it reads as one line,
-// the hint in brackets; on a terminal the hint goes on a line of its own.
+// the hint after a semicolon: in brackets, a hint that names a place in
+// brackets of its own would nest them; on a terminal the hint goes on a line
+// of its own.
 type hinted struct {
 	err  error
 	hint string
 }
 
-func (h hinted) Error() string { return h.err.Error() + " (" + h.hint + ")" }
+func (h hinted) Error() string { return h.err.Error() + "; " + h.hint }
 
 // Unwrap gives the error itself, for errors.Is.
 func (h hinted) Unwrap() error { return h.err }
@@ -142,13 +144,19 @@ func hint(err error, what string) error { return hinted{err, what} }
 // and "→ what to do" on a terminal, one plain line otherwise.
 func printErr(errOut io.Writer, err error) { printErrLook(lookFor(errOut), errOut, err) }
 
+// splitHint is an error's words and what to do about it, "" when it says
+// nothing to do.
+func splitHint(err error) (msg, what string) {
+	var h hinted
+	if errors.As(err, &h) {
+		return h.err.Error(), h.hint
+	}
+	return err.Error(), ""
+}
+
 // printErrLook is printErr in a look given.
 func printErrLook(l look, errOut io.Writer, err error) {
-	var h hinted
-	msg, what := err.Error(), ""
-	if errors.As(err, &h) {
-		msg, what = h.err.Error(), h.hint
-	}
+	msg, what := splitHint(err)
 	// "usage: " marks a mistake in the command line; it is not said.
 	msg = trimUsage(msg)
 	if !l.on {

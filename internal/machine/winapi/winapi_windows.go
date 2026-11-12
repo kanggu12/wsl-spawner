@@ -326,6 +326,24 @@ func quotedArgs(args []string) (string, error) {
 	return strings.Join(quoted, " "), nil
 }
 
+// systemExe is the program named name in Windows' own folder, not one a
+// folder on the PATH may hold in its place: the hook runs these as whoever
+// signs out. Where it is not there, the name, as it was.
+func systemExe(name string) string {
+	if sys, err := windows.GetSystemDirectory(); err == nil {
+		if p := filepath.Join(sys, name); fileExists(p) {
+			return p
+		}
+	}
+	return name
+}
+
+// fileExists reports whether a file is at p.
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
 // ExcludedPorts is what netsh lists of the ports Windows keeps from
 // programs for proto ("tcp" or "udp"): Hyper-V, WinNAT and others reserve
 // ranges, and a program cannot bind a port in one. Any user may ask.
@@ -333,7 +351,7 @@ func ExcludedPorts(proto string) (string, error) {
 	if proto != "tcp" && proto != "udp" {
 		return "", fmt.Errorf("no protocol %q", proto)
 	}
-	cmd := exec.Command("netsh.exe", "interface", "ipv4", "show", "excludedportrange", "protocol="+proto)
+	cmd := exec.Command(systemExe("netsh.exe"), "interface", "ipv4", "show", "excludedportrange", "protocol="+proto)
 	cmd.Dir = os.Getenv("SystemRoot")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
 	out, err := cmd.Output()

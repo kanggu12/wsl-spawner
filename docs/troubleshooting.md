@@ -7,7 +7,7 @@ Start with `wsl-spawner check`: it reads everything a stop and a start stand on 
 
 The stop ended `limit` (exit code 3, `!` on the screen): a step was still running at `stop_limit`.
 
-- `wsl-spawner history` names the step. A hook: make it quicker, or give it a timeout of its own. A unit: its own
+- `wsl-spawner history` names the step after the result, as `out of time: hook 10-backup`. A hook: make it quicker, or give it a timeout of its own. A unit: its own
   `TimeoutStopSec` is what it waits. Docker or Podman: the container with the longest stop timeout sets the wait;
   `wsl-spawner check` lists those at or past the limit.
 - Raise the limit: `wsl-spawner setup --stop-limit 600`. The sign-out hook still has only what Windows waits for the
@@ -15,10 +15,11 @@ The stop ended `limit` (exit code 3, `!` on the screen): a step was still runnin
 
 ## A step failed
 
-The stop ended `failed`: a step exited with a code other than 0 (a hook, the units' stop, Docker's or Podman's); the
-other steps still ran. Run the hook by hand as root to see what it says, `journalctl -u UNIT` for a unit, or
-`journalctl -u docker` for Docker's daemon. Without systemd, Docker's step fails when `/var/run/docker.pid` names no
-running `dockerd`.
+The stop ended `failed`: a step exited with a code other than 0 (a hook, the units' stop, Docker's or Podman's, or the
+stop's own notes in `/var/lib/wsl-spawner`, which a full disk refuses); the other steps still ran. Run the hook by hand
+as root to see what it says, `journalctl -u UNIT` for a unit, or `journalctl -u docker` for Docker's daemon. A `docker`
+whose daemon is not the distribution's, with no unit of Docker's under systemd and no `/var/run/docker.pid` naming a
+running `dockerd`, is Docker Desktop's or another engine's: it has no step.
 
 ## A container did not come back
 
@@ -45,13 +46,15 @@ stop it with `wsl-spawner stop` before stopping WSL by hand.
   stopped; one before it that stops WSL itself leaves it nothing to stop, and `check` names it. PowerShell sign-out
   scripts and a domain's run after the hook: `hook status` lists the PowerShell ones.
 - `hook status` lists other copies' hooks. One that runs before this one stops WSL first: take it out with that copy's
-  own `wsl-spawner hook remove`, or in gpedit.msc.
+  own `wsl-spawner hook remove`, or in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff.
 - `hook install` ended with exit code 3: the change is made, but Windows has not read it yet; it counts from your next
   sign-in, and `gpupdate /target:user` has Windows read it now.
 - `wsl-spawnerw.exe` is gone, as a virus scanner may take it: `hook remove` and `uninstall` still take the hook out;
   `hook install` and `set --logon` need it: install wsl-spawner again.
 - The hook and the sign-in program need wsl-spawner on a fixed disk of this PC, not on a network share or in a
-  distribution.
+  distribution. The hook also needs it where only you and administrators can write: `hook install` names who else may
+  change the program or a folder above it, and `icacls FOLDER` shows the permissions to take away. A standard user's
+  hook is an administrator's install: [For a standard user](setup.md#for-a-standard-user).
 - Windows waits for the sign-out scripts up to its policy's limit; past that, it goes on without them.
 - On Windows Home, the local Group Policy's sign-out scripts may not run.
 - `wsl-spawner history` lists each stop by sign-out: none after a sign-out means the hook did not run. One that says

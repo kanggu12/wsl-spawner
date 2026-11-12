@@ -27,9 +27,9 @@ the first time. Open a new terminal, PowerShell or WSL, and run `wsl-spawner`.
 | Variable | Does |
 |:---|:---|
 | `WSL_SPAWNER_VERSION` | a release to install, like `v0.1.0` (default: the latest) |
-| `WSL_SPAWNER_BIN_DIR` | where it goes (default: `%LOCALAPPDATA%\Programs\wsl-spawner`) |
+| `WSL_SPAWNER_BIN_DIR` | where it goes, a full path (default: `%LOCALAPPDATA%\Programs\wsl-spawner`) |
 | `WSL_SPAWNER_NO_SETUP=1` | no setup after the install |
-| `WSL_SPAWNER_BASE_URL` | where the releases are downloaded from, for a mirror |
+| `WSL_SPAWNER_BASE_URL` | where the releases are downloaded from, for a mirror: an `https://` address |
 | `WSL_SPAWNER_ZIP` | a zip downloaded already, installed as it is |
 | `WSL_SPAWNER_UNINSTALL=1` | remove wsl-spawner instead ([Remove](#remove)) |
 | `WSL_SPAWNER_PURGE=1` | with `WSL_SPAWNER_UNINSTALL`, the settings and the history too |
@@ -47,6 +47,22 @@ The launcher finds `wsl-spawner.exe` beside it or on the Windows PATH WSL passes
 with `appendWindowsPath = false` needs the folder on its own PATH.
 
 From source, with Go: `make build` puts the three files in `dist/`.
+
+### For a standard user
+
+The sign-out hook runs for every user of the PC, so wsl-spawner refuses a hook whose program anyone but you, the system
+and the administrators could change. A standard user's own folder is such a program to an administrator: Windows would
+run it with the rights the administrator types. An administrator installs wsl-spawner under Program Files instead, and
+its hook from there, which runs as every user signs out:
+
+```powershell
+$env:WSL_SPAWNER_BIN_DIR = "$env:ProgramFiles\wsl-spawner"; $env:WSL_SPAWNER_NO_SETUP = 1
+irm https://github.com/kanggu12/wsl-spawner/releases/latest/download/install.ps1 | iex
+& "$env:ProgramFiles\wsl-spawner\wsl-spawner.exe" hook install
+```
+
+In a terminal opened as administrator; the install also puts the folder on that administrator's PATH. Each user then
+runs that `wsl-spawner.exe`, or their own install for everything but the hook.
 
 ## Upgrade
 
@@ -70,11 +86,14 @@ files, and their folder and PATH entry when the folder is named `wsl-spawner` an
 own (`WSL_SPAWNER_BIN_DIR`) and its PATH entry stay. The settings and the history stay unless `--purge` is given. The
 copies of the Group Policy files from before the first install (`*.before-wsl-spawner`) stay too.
 
-Installed with Scoop: `wsl-spawner uninstall --purge` takes out what it put on the PC and the settings, then
-`scoop uninstall wsl-spawner`. Without the program, the install script removes what an install put there: the
-three files, the sign-in program when it starts that folder's program, the folder and its PATH entry when the folder is
-named `wsl-spawner`, and with `WSL_SPAWNER_PURGE=1` only wsl-spawner's own settings and history files. While the
-sign-out hook still starts that folder's program it removes nothing: install again, then `wsl-spawner uninstall`.
+Installed with Scoop: `wsl-spawner uninstall` takes out what it put on the PC (with `--purge`, the settings and the
+history too) and keeps the program, then `scoop uninstall wsl-spawner` removes it. Installed by an administrator under
+Program Files, where a terminal that is not elevated may not delete it: the same, and `wsl-spawner uninstall` in a
+terminal opened as administrator removes the program. Without the program, the install script removes what an install
+put there: the three files, the sign-in program when it starts that folder's program, the folder and its PATH entry when
+the folder is named `wsl-spawner`, and with `WSL_SPAWNER_PURGE=1` only wsl-spawner's own settings and history files.
+While the sign-out hook still starts that folder's program it removes nothing: install again, then `wsl-spawner
+uninstall`.
 
 ```powershell
 $env:WSL_SPAWNER_UNINSTALL = 1; irm https://github.com/kanggu12/wsl-spawner/releases/latest/download/install.ps1 | iex

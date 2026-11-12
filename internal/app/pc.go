@@ -50,6 +50,17 @@ type PC struct {
 	// which Windows can start a program by itself whatever else runs: not a
 	// share, a distribution's own files, or a drive that can be taken out.
 	FixedDisk func(path string) bool
+	// WhoElseCanChange names who, beyond the person who runs this (when
+	// trustUser), the system and the administrators, can change what
+	// Windows starts at path (the program, its folder or one above), and
+	// at which of them; "" when none can. The sign-out hook runs for every
+	// user of the PC, as whoever signs out.
+	WhoElseCanChange func(path string, trustUser bool) (who, at string, err error)
+	// StandardUser reports whether this runs as a standard user, who
+	// would need an administrator's own name and password to change the
+	// policy: a program such a user can change is not one to run as that
+	// administrator.
+	StandardUser func() bool
 	// LookAt looks at the file at path, and only looks: nil when it is
 	// there, an error that is fs.ErrNotExist when it is not, another when
 	// this user may not look at it. A program a sign-out script names may
@@ -69,11 +80,15 @@ type PC struct {
 	// file, the user's PATH as stored, whether another program holds a
 	// file, how many other copies of a program run, and this program's
 	// file removed once it has ended, with its folder.
-	OnWindows       bool
-	Executable      func() (string, error)
-	UserPath        func() (value string, expand bool, err error)
-	SetUserPath     func(value string, expand bool) error
-	InUse           func(path string) bool
+	OnWindows   bool
+	Executable  func() (string, error)
+	UserPath    func() (value string, expand bool, err error)
+	SetUserPath func(value string, expand bool) error
+	InUse       func(path string) bool
+	// CanDelete asks Windows whether this user may delete the file at
+	// path, and deletes nothing: an error that is fs.ErrPermission when
+	// not. A made-up PC without one, as the demo's, may delete anything.
+	CanDelete       func(path string) error
 	OthersRunning   func(exe string) (int, error)
 	DeleteAfterExit func(exe, dir string) error
 }
@@ -105,6 +120,22 @@ func (pc PC) OnFixedDisk(path string) bool {
 	return pc.FixedDisk(path)
 }
 
+// IsStandardUser is StandardUser; a made-up PC without one, as the demo's,
+// has an administrator at it.
+func (pc PC) IsStandardUser() bool { return pc.StandardUser != nil && pc.StandardUser() }
+
+// OthersCanChange is WhoElseCanChange for the person at this PC: who
+// beyond them (a standard user has no part in it: the administrators'
+// are the only to trust), the system and the administrators can change what
+// Windows starts at path. On a made-up PC without one, as the demo's,
+// nobody can.
+func (pc PC) OthersCanChange(path string) (who, at string, err error) {
+	if pc.WhoElseCanChange == nil {
+		return "", "", nil
+	}
+	return pc.WhoElseCanChange(path, !pc.IsStandardUser())
+}
+
 // Gone reports whether the program at path is gone for certain: its file
 // is not there, on a fixed disk of this PC that is. A share, or a drive
 // taken out, may be back later; a file this user may not look at may be
@@ -114,8 +145,12 @@ func (pc PC) Gone(path string) bool {
 }
 
 // There reports whether the program at path is there for this user to
-// start: Windows starts a sign-out script as the user who signs out.
-func (pc PC) There(path string) bool { return pc.LookAt != nil && pc.LookAt(path) == nil }
+// start: Windows starts a sign-out script as the user who signs out. Only
+// on a fixed disk of this PC is it looked for: a read-only command does not
+// reach out to a share a sign-out script names, which a stat would do.
+func (pc PC) There(path string) bool {
+	return pc.LookAt != nil && pc.OnFixedDisk(path) && pc.LookAt(path) == nil
+}
 
 // ErrNoQuietExe is a copy of this program without its build with no
 // console beside it.
@@ -139,7 +174,7 @@ func RealPC() PC {
 			}
 			return p, nil
 		},
-		FixedDisk: winapi.FixedDisk,
+		FixedDisk: winapi.FixedDisk, WhoElseCanChange: winapi.WhoElseCanChange, StandardUser: winapi.StandardUser,
 		// os.Stat says it as LookAt does: no such file or folder is
 		// fs.ErrNotExist, a file this user may not look at another error.
 		LookAt: func(p string) error {
@@ -151,7 +186,7 @@ func RealPC() PC {
 		// The launcher passes the distribution of the terminal it runs in.
 		TerminalDistro: func() string { return os.Getenv("WSL_DISTRO_NAME") },
 		OnWindows:      runtime.GOOS == "windows", Executable: os.Executable,
-		UserPath: winapi.UserPath, SetUserPath: winapi.SetUserPath, InUse: winapi.InUse,
+		UserPath: winapi.UserPath, SetUserPath: winapi.SetUserPath, InUse: winapi.InUse, CanDelete: winapi.CanDelete,
 		OthersRunning: winapi.OthersRunning, DeleteAfterExit: winapi.DeleteAfterExit,
 	}
 }

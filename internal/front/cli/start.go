@@ -108,8 +108,9 @@ func logonCmd(p *apps) *cobra.Command {
 	}
 }
 
-// startAll starts each distribution in turn, waits for what comes back,
-// says it, or prints it as JSON, and keeps it in the history.
+// startAll starts each distribution in turn, then waits for what comes
+// back in all of them at once, each its own time, says it in their order,
+// or prints it as JSON, and keeps it in the history.
 func startAll(ctx context.Context, a *app.App, targets []distros.Distro, by string, out io.Writer, l look, asJSON bool) error {
 	// The App's clock, as a stop's: the demo's made-up PC keeps its own.
 	began := a.Now()
@@ -121,27 +122,53 @@ func startAll(ctx context.Context, a *app.App, targets []distros.Distro, by stri
 			fmt.Fprintln(out, s)
 		}
 	}
-	for _, d := range targets {
+	// One distribution's start: what is said of it, kept and printed, and
+	// done once that is known.
+	type start struct {
+		line string
+		de   history.Distro
+		r    api.DistroStart
+		done chan struct{}
+	}
+	starts := make([]*start, len(targets))
+	// Each started in the targets' order, as WSL starts them one after the
+	// other; what comes back in each is waited for at once with the others,
+	// each from its own start for startWait: one after the other, a third
+	// distribution at sign-in came minutes late.
+	for i, d := range targets {
 		t0 := a.Now()
-		de := history.Distro{Name: d.Name, Result: "started"}
-		r := api.DistroStart{Name: d.Name, Result: "started", Back: []api.CameBack{}}
+		s := &start{de: history.Distro{Name: d.Name, Result: "started"},
+			r: api.DistroStart{Name: d.Name, Result: "started", Back: []api.CameBack{}}, done: make(chan struct{})}
+		starts[i] = s
+		// took is how long its start took, from t0 to now.
+		took := func() float64 { return a.Now().Sub(t0).Seconds() }
 		if d.Running {
-			de.Result, r.Result = "running", "running"
-			say(d.Name + " is running already")
+			s.de.Result, s.r.Result = "running", "running"
+			s.line, s.de.Took = d.Name+" is running already", took()
+			close(s.done)
 		} else if err := a.WSL.Start(ctx, d.Name); err != nil {
-			de.Result, de.Err, r.Result, r.Err = "error", err.Error(), "error", err.Error()
+			s.de.Result, s.de.Err, s.r.Result, s.r.Err = "error", err.Error(), "error", err.Error()
 			failed++
-			say(l.bad("✗") + " " + d.Name + ": " + firstLine(err.Error()))
+			s.line, s.de.Took = l.bad("✗")+" "+d.Name+": "+firstLine(err.Error()), took()
+			close(s.done)
 		} else {
-			back := waitForStart(ctx, a, d.Name, t0)
-			for _, b := range back {
-				r.Back = append(r.Back, api.CameBack{Engine: b.Engine, Name: b.Name, What: b.What})
-			}
-			say(l.done(d.Name + " started" + backWords(back)))
+			go func() {
+				defer close(s.done)
+				back := waitForStart(ctx, a, d.Name, t0)
+				for _, b := range back {
+					s.r.Back = append(s.r.Back, api.CameBack{Engine: b.Engine, Name: b.Name, What: b.What})
+				}
+				s.line, s.de.Took = l.done(d.Name+" started"+backWords(back)), took()
+			}()
 		}
-		de.Took = a.Now().Sub(t0).Seconds()
-		e.Distros = append(e.Distros, de)
-		res.Results = append(res.Results, r)
+	}
+	// Said and kept in the targets' order, each as soon as it and those
+	// before it are known.
+	for _, s := range starts {
+		<-s.done
+		say(s.line)
+		e.Distros = append(e.Distros, s.de)
+		res.Results = append(res.Results, s.r)
 	}
 	e.Took = a.Now().Sub(began).Seconds()
 	if err := history.Open(a.Dir).Add(e); err != nil && !asJSON {

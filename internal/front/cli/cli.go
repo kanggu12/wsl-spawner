@@ -240,8 +240,8 @@ func newRoot(p *apps) *cobra.Command {
 			"container gets the time it asks for, and what was running comes back when the\n" +
 			"distribution starts again. A sign-out hook does the same when Windows shuts down\n" +
 			"or restarts; distributions you choose start at sign-in and keep running.\n\n" +
-			"Started without a command in a terminal it opens the screen, or in CLI mode prints\n" +
-			"the distributions and the commands to use. Every command works in both.",
+			"Started without a command in a terminal it opens the screen, or in CLI mode\n" +
+			"prints the distributions and the commands to use. Every command works in both.",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -270,6 +270,14 @@ func newRoot(p *apps) *cobra.Command {
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return fmt.Errorf("%w: %w", errUsage, err) })
 	root.SetHelpCommand(helpCmd())
+	// Every help fits an 80-column console: the commands' lines and the
+	// flags wrap under their words, as cobra does not do by itself.
+	cobra.AddTemplateFunc("wrapShort", wrapShort)
+	t := root.UsageTemplate()
+	t = strings.ReplaceAll(t, "{{rpad .Name .NamePadding }} {{.Short}}", "{{rpad .Name .NamePadding }} {{wrapShort .Short .NamePadding}}")
+	t = strings.ReplaceAll(t, ".LocalFlags.FlagUsages", "(.LocalFlags.FlagUsagesWrapped 80)")
+	t = strings.ReplaceAll(t, ".InheritedFlags.FlagUsages", "(.InheritedFlags.FlagUsagesWrapped 80)")
+	root.SetUsageTemplate(t)
 	// --lang changes nothing version prints: its help leaves it out.
 	for _, c := range root.Commands() {
 		if c.Name() == "version" {
@@ -320,6 +328,27 @@ func helpCmd() *cobra.Command {
 			return names, cobra.ShellCompDirectiveNoFileComp
 		},
 	}
+}
+
+// wrapShort wraps a command's short line in a help's list of commands to
+// 80 columns: its later lines start under its first, after the name and its
+// padding.
+func wrapShort(s string, pad int) string {
+	lead := 2 + pad + 1
+	var lines []string
+	line := ""
+	for _, w := range strings.Fields(s) {
+		if line != "" && lead+len([]rune(line))+1+len([]rune(w)) > 80 {
+			lines = append(lines, line)
+			line = ""
+		}
+		if line != "" {
+			line += " "
+		}
+		line += w
+	}
+	lines = append(lines, line)
+	return strings.Join(lines, "\n"+strings.Repeat(" ", lead))
 }
 
 // withoutGlobalFlags leaves the flags every command takes out of cmd's help,

@@ -123,7 +123,7 @@ func TestTheBoxAsksFirstAndEscDoesNothing(t *testing.T) {
 
 func TestKoreanScreen(t *testing.T) {
 	f := ansi.Strip(frame(t, "ko", 120, 30, ""))
-	for _, want := range []string{"배포판", "실행 중", "설치됨", "계속 켜 둠", "멈춤", "점검"} {
+	for _, want := range []string{"배포판", "실행 중", "✓ 설치", "계속 켜 두기", "멈춤", "점검"} {
 		if !strings.Contains(f, want) {
 			t.Errorf("no %q in\n%s", want, f)
 		}
@@ -495,9 +495,10 @@ func TestARunKeepsItsTitleAndEachStepUnderItsName(t *testing.T) {
 }
 
 func TestAStopSaysTheTimeItTook(t *testing.T) {
-	// The demo stops at once; its steps say 2 s and 21 s: the stop took 23.
+	// The demo stops at once; its steps say 2 s and 21 s: the stop took 23,
+	// said in seconds at the title's end as under it, one way of saying it.
 	f := ansi.Strip(frame(t, "en", 120, 30, "s enter"))
-	if !strings.Contains(f, "0:23") || !strings.Contains(f, "23 s of 300") {
+	if !strings.HasSuffix(strings.TrimRight(lineWith(f, "Stopped Ubuntu-24.04"), " "), "23 s") || !strings.Contains(f, "23 s of 300") || strings.Contains(f, "0:23") {
 		t.Fatalf("%s", f)
 	}
 }
@@ -637,7 +638,7 @@ func TestTheWordsSayWhatTheyMean(t *testing.T) {
 		t.Errorf("the Korean help's heading in\n%s", f)
 	}
 	// A time in parentheses after a Korean sentence stands a space apart.
-	if f := ansi.Strip(frame(t, "ko", 120, 60, "c")); !strings.Contains(f, "제 시간에 (") {
+	if f := ansi.Strip(frame(t, "ko", 120, 60, "c")); !strings.Contains(f, "제시간에 (") {
 		t.Errorf("the Korean check in\n%s", f)
 	}
 	// The next tests speak English.
@@ -741,4 +742,45 @@ func TestANewInstallSaysItHasNoStopOrStartYet(t *testing.T) {
 		}
 	}
 	i18n.Set(i18n.Lang("en"))
+}
+
+func TestTheNewestStopsStayBesideTheDetailsInKoreanToo(t *testing.T) {
+	// The right column holds the containers and, under them, the newest
+	// stops and starts, as many as fit: a section that does not fit whole
+	// goes, but these lose their oldest rows instead.
+	for _, c := range []struct {
+		lang, title string
+		w, h        int
+	}{{"ko", "최근", 120, 30}, {"en", "Recent", 140, 40}, {"ko", "최근", 140, 40}} {
+		f := ansi.Strip(frame(t, c.lang, c.w, c.h, ""))
+		if row := lineWith(f, c.title); row == "" || strings.Index(row, c.title) < 20 {
+			t.Errorf("%s %dx%d: the newest stops are not beside the details:\n%s", c.lang, c.w, c.h, f)
+		}
+	}
+	i18n.Set(i18n.English)
+}
+
+func TestASmallScreenKeepsHowTheLastStopWentAndNoHeadingAlone(t *testing.T) {
+	// At 60x20 the selected distribution's last stop has room for its
+	// heading and its first line, which says how it went: shown, not given
+	// up whole for the PC's recent stops. And at every small size no
+	// heading stands with nothing under it.
+	f := ansi.Strip(frame(t, "en", 60, 20, ""))
+	if !strings.Contains(f, "Last stop") || !strings.Contains(f, "clean 11-11 22:36") {
+		t.Errorf("60x20: the last stop is gone:\n%s", f)
+	}
+	for _, s := range [][2]int{{60, 18}, {60, 20}, {80, 24}, {100, 30}} {
+		for _, keys := range []string{"", "down", "down down"} {
+			lines := strings.Split(ansi.Strip(frame(t, "en", s[0], s[1], keys)), "\n")
+			for i, l := range lines {
+				title := strings.TrimSpace(l)
+				if title != "Choices" && title != "Last stop" && title != "Next stop" && title != "Recent" {
+					continue
+				}
+				if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == "" {
+					t.Errorf("%dx%d %q: %s stands alone:\n%s", s[0], s[1], keys, title, strings.Join(lines, "\n"))
+				}
+			}
+		}
+	}
 }

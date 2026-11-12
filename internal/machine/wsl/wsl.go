@@ -5,6 +5,7 @@
 package wsl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -36,6 +37,27 @@ var ErrNoAnswer = errors.New("WSL did not answer in time")
 // and waiting on it would leave the screen or the command waiting forever.
 // A variable so tests can make it short.
 var answerLimit = time.Minute
+
+// maxOutput is how much of what a wsl.exe call prints is kept. A probe or a
+// stop of hundreds of containers is some hundreds of kilobytes; more is a
+// distribution that says more than it should, and is not kept, so one cannot
+// use up the memory of the run that stops the others.
+const maxOutput = 8 << 20
+
+// capped keeps the first maxOutput bytes written to it, and takes the rest
+// without keeping it: the program writing is never blocked or told off, and
+// a probe cut short this way reads as one that did not finish.
+type capped struct{ b bytes.Buffer }
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := maxOutput - c.b.Len(); room > 0 {
+		c.b.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+// Bytes is what was kept.
+func (c *capped) Bytes() []byte { return c.b.Bytes() }
 
 // limited gives ctx the answer limit when it has no deadline of its own.
 func limited(ctx context.Context) (context.Context, context.CancelFunc) {

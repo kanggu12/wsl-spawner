@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,9 +31,10 @@ func statusCmd(p *apps) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "status",
 		Short: "List the distributions: running or not, what wsl-spawner does with each, how each last stopped",
-		Long: "status lists every WSL distribution: whether it runs, what wsl-spawner does with it,\n" +
-			"whether it starts at sign-in and is kept running, its containers, and how its last\n" +
-			"start ended. A distribution that does not run is not started to be read.",
+		Long: "status lists every WSL distribution: whether it runs, what wsl-spawner does\n" +
+			"with it, whether it starts at sign-in and is kept running, its containers, and\n" +
+			"how its last start ended. A distribution that does not run is not started to\n" +
+			"be read.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a, err := p.get()
@@ -317,13 +319,33 @@ func kindWords(l look, d distros.Distro) string {
 
 // containerWords counts the running containers, and those to come back.
 func containerWords(l look, p inside.Probe) string {
-	if len(p.Engines) == 0 {
-		return l.muted("–")
-	}
-	for e, up := range p.Engines {
-		if !up {
-			return l.warn(e + " down")
+	// An engine that does not answer is worth a look, before all. One
+	// asleep behind its socket, or another's daemon, is not: said quietly
+	// where no engine of the distribution's own runs.
+	quiet := ""
+	for _, e := range []string{"docker", "podman"} {
+		switch p.EngineState(e) {
+		case inside.EngineDown:
+			if _, found := p.Engines[e]; found {
+				return l.warn(e + " down")
+			}
+		case inside.EngineAsleep:
+			quiet = e + " asleep"
+		case inside.EngineForeign:
+			if quiet == "" {
+				quiet = e + " not its own"
+			}
 		}
+	}
+	up := false
+	for _, isUp := range p.Engines {
+		up = up || isUp
+	}
+	switch {
+	case !up && quiet != "":
+		return l.muted(quiet)
+	case !up:
+		return l.muted("–")
 	}
 	running := 0
 	for _, c := range p.Containers {
@@ -407,7 +429,23 @@ func statusJSON(wslVersion string, ds []distros.Distro, c config.Config) api.Sta
 			for _, b := range pr.Bring {
 				po.Bring = append(po.Bring, b.Name)
 			}
-			po.StopUnits = nonNil(pr.StopUnits)
+			// The units a stop takes, and those it passes by.
+			po.StopUnits = nonNil(pr.TakenStopUnits())
+			po.StopUnitsSkipped = []string{}
+			for _, u := range pr.StopUnits {
+				if !slices.Contains(po.StopUnits, u) {
+					po.StopUnitsSkipped = append(po.StopUnitsSkipped, u)
+				}
+			}
+			// Each engine by its word, the ones left alone too.
+			po.EngineStates = map[string]string{}
+			for _, e := range []string{"docker", "podman"} {
+				if _, found := pr.EngineStates[e]; found {
+					po.EngineStates[e] = pr.EngineState(e)
+				} else if _, found := pr.Engines[e]; found {
+					po.EngineStates[e] = pr.EngineState(e)
+				}
+			}
 			if s := pr.LastStop; s != nil {
 				po.LastStop = &api.LastStop{At: s.At.UTC(), Took: s.Took.Seconds(), Result: s.Result, By: s.By}
 			}

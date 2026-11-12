@@ -55,8 +55,9 @@ the last stop noted, and says what came back.
 
 Starting at sign-in keeps it running, which needs wsl-spawner set up in it; left to WSL, it has none of these. A choice
 turned on brings what it needs; one asked both ways (`--logon --keep=false`) is refused. A change inside a distribution
-that does not run, on or off, starts it and reads it first, and only what is not so already changes. It says what
-changes and asks first.
+that does not run, on or off, starts it and reads it first, and only what is not so already changes. `--managed` on a
+distribution set up by an older version of wsl-spawner puts the newer start script in it, which `check` says to do. It
+says what changes and asks first.
 
 ### check
 
@@ -75,7 +76,7 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 | Command | Does |
 |:---|:---|
 | `hook status [--json]` | whether the sign-out hook is installed and last, what runs at sign-out, and how long Windows waits |
-| `hook install [--yes]` | adds it, after every other sign-out script, or moves it last; Windows asks for an administrator |
+| `hook install [--yes]` | adds it, after every other sign-out script, or moves it last; Windows asks for an administrator. The program must be on a fixed disk, in a folder only you and administrators can write to |
 | `hook remove [--yes]` | takes it out; the other sign-out scripts stay |
 
 ### setup
@@ -101,12 +102,15 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 | `m` / `k` / `l` / `x` | turn: set up in it / kept running / started at sign-in / left to WSL |
 | `c` / `h` / `?` | the check / the history / the keys and how it works |
 | `r` | read the distributions again |
-| `q` `esc` | quit |
+| `q` | quit |
 
-Each change asks in a box: `enter` or `y` does it, `esc` or `n` does not. On the check, history and help screens, `↑`
-`↓` `pgup` `pgdown` scroll, `esc` goes back, and `r` reads the check again. While a stop runs, its steps play on the
-screen; `enter` goes back once it ends. In setup, `enter` and `→` go on, `←` goes back, `↑` `↓` choose, `space` changes
-a distribution's level, `esc` quits.
+The bar at the bottom shows the keys that do something to the distribution selected: `s` for one running, `t` for one
+stopped, and `m`, `k` and `l` only where systemd runs or is not known yet. Each change asks in a box: `enter` or `y`
+does it, `esc` or `n` does not. On the check, history and help screens, `↑` `↓` `pgup` `pgdown` scroll, `esc` goes
+back, and `r` reads the check again; on the main screen `esc` does nothing, so going back twice does not quit. While a
+stop runs, its steps play on the screen; `enter` goes back once it ends. In setup, `enter`, `→`, `l` and `tab` go on,
+`←`, `h`, `shift+tab` and `esc` go back a page, `↑` `↓` choose, `space` changes a distribution's level or the hook's
+choice, and `q` quits; `esc` on the first page quits as well.
 
 ## Exit codes
 
@@ -125,8 +129,8 @@ Every `--json` output is one object that starts with `"schema": 1`; a later chan
 
 | Command | Holds |
 |:---|:---|
-| `status` | `wsl_version`, `stop_limit_seconds`, `resume`, and `distributions`: each `name`, `default`, `wsl`, `running`, `kind` (`set-up`, `stop-only`, `not-read` for one not running or not answering, `skipped`, `owned`, `wsl1`), `owner`, `at_logon`, `probe_error`, and for one that runs `probe` (with `probe_error` too when it was read in part): `systemd`, `interop`, `kept_running`, `set_up`, `docker_live_restore`, `engines`, `containers` (`engine`, `id`, `name`, `state`, `restart_policy`, `stop_timeout_seconds`, `image`, `compose_project`, `auto_remove`), `hooks`, `stop_units`, `failed_units`, `last_end` (`how`: `unknown`, `first`, `clean`, `limit`, `failed`, `cut`; `start`), `last_stop` (`at`, `took_seconds`, `result`, `by`), `to_bring_back`, `resumed` (`engine`, `name`, `what`), `resumed_at`, `complete` (`false` for a look cut off at its limit) |
-| `stop` | `results`: each `name`, `result` (`clean`, `limit`, `failed`, `error`), `clean`, `took_seconds`, `steps` (`step`, `hook`, `count`, `code`, `took_seconds`), `error`; `shutdown`; `error`; `detached_from`, the distribution of the terminal a stop went on without |
+| `status` | `wsl_version`, `stop_limit_seconds`, `resume`, and `distributions`: each `name`, `default`, `wsl`, `running`, `kind` (`set-up`, `stop-only`, `not-read` for one not running or not answering, `skipped`, `owned`, `wsl1`), `owner`, `at_logon`, `probe_error`, and for one that runs `probe` (with `probe_error` too when it was read in part): `systemd` (systemd's own word, `""` without it, `noanswer` when it runs but did not answer), `interop`, `kept_running`, `set_up`, `docker_live_restore`, `engines`, `containers` (`engine`, `id`, `name`, `state`, `restart_policy`, `stop_timeout_seconds`, `image`, `compose_project`, `auto_remove`), `engine_states` (each engine found: `up`, `down`, `asleep` for a Docker stopped by hand with its socket listening, `foreign` for a `docker` whose daemon is not the distribution's own), `hooks`, `stop_units` (those a stop takes: running now), `stop_units_skipped`, `failed_units`, `last_end` (`how`: `unknown`, `first`, `clean`, `limit`, `failed`, `cut`; `start`), `last_stop` (`at`, `took_seconds`, `result`, `by`), `to_bring_back`, `resumed` (`engine`, `name`, `what`), `resumed_at`, `complete` (`false` for a look cut off at its limit) |
+| `stop` | `results`: each `name`, `result` (`clean`, `limit`, `failed`, `error`, or `busy` for one another stop is stopping, which that stop ends and records), `clean`, `took_seconds`, `steps` (`step`: `hook`, `units`, `docker`, `podman`, `sync`, or `record` when a file of the stop's own could not be written; `hook`, `count`, `code`, `took_seconds`), `error`; `shutdown`; `error`; `detached_from`, the distribution of the terminal a stop went on without |
 | `stop --events` | per line: `event` (`line`, `terminate`, `shutdown`, `finished`), `distro`, `done` once a `terminate` or `shutdown` ended, `error`; for a line `kind` (`plan`, `start`, `done`, `end`), `step`, `hook`, `count` on a `plan` or `start`, `code` and `took_seconds` on every `done`, 0 included, and `result` on the `end`; for `finished` the distribution's `result` and `took_seconds`. The results follow, as `--json` prints them |
 | `start` | `results`: each `name`, `result` (`started`, `running`, `error`), `error`, `came_back` (`engine`, `name`, `what`: `started`, `running`, `failed`, `exited`, `gone`) |
 | `set` | `name`, `changed`, `managed`, `keep`, `logon`, `skip` |

@@ -17,6 +17,13 @@ import (
 // returns its lines read, and what it printed.
 func stopIn(t *testing.T, dir, root string, o StopOptions) ([]StopLine, string) {
 	t.Helper()
+	return stopInWith(t, dir, root, "", o)
+}
+
+// stopInWith is stopIn with the shell's lines in prelude run first, in the
+// script's own shell: a limit a test sets on what it may write.
+func stopInWith(t *testing.T, dir, root, prelude string, o StopOptions) ([]StopLine, string) {
+	t.Helper()
 	if o.Limit == 0 {
 		o.Limit = 300 * time.Second
 	}
@@ -33,7 +40,7 @@ func stopIn(t *testing.T, dir, root string, o StopOptions) ([]StopLine, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := shtest.Run(t, dir, "R='"+root+"'\n"+script)
+	out, err := shtest.Run(t, dir, prelude+"R='"+root+"'\n"+script)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -118,7 +125,7 @@ func TestStopRecordsItselfWhereItIsSetUp(t *testing.T) {
 		t.Fatalf("record %q", got)
 	}
 	// What the probe reads back from it.
-	p := Probe{BootID: "0f0e0d0c-0b0a-4908-8706-050403020100", InitStart: "9999", StartScript: StartScriptMark + "1",
+	p := Probe{BootID: "0f0e0d0c-0b0a-4908-8706-050403020100", InitStart: "9999", StartScript: StartScriptMark + StartScriptVersion,
 		Runs: []Run{{ID: "0f0e0d0c-0b0a-4908-8706-050403020100@4242"}, {ID: "0f0e0d0c-0b0a-4908-8706-050403020100@9999"}}}
 	for _, line := range strings.Split(strings.TrimSpace(want), "\n") {
 		p.LastStop = addStopField(p.LastStop, line)
@@ -291,35 +298,57 @@ func TestAHookThatRunsOutOfTimeEndsTheStopAsLimit(t *testing.T) {
 	}
 }
 
-// systemd is a made-up systemctl for the stop: the units named active are,
-// and every call it is asked to make that changes something is noted in
-// the file it returns.
+// systemd is a made-up systemctl for the stop: the units named active are
+// there and run, and every call it is asked to make that changes something
+// is noted in the file it returns.
 func systemd(t *testing.T, dir string, active ...string) (asked string) {
 	t.Helper()
+	return systemdWith(t, dir, active, active)
+}
+
+// systemdWith is systemd with units that are there (loaded) and do not run
+// besides those that run, answering as systemctl does: is-active says 3
+// for a unit that does not run and 4 for one that is not there; show
+// says each one's LoadState; a stop that names a unit it does not have
+// says so, stops the others, and ends with 5.
+func systemdWith(t *testing.T, dir string, loaded, active []string) (asked string) {
+	t.Helper()
 	asked = filepath.Join(dir, "systemctl.asked")
-	shtest.Stub(t, dir, "systemctl", `case "$1" in
-is-active) case ' `+strings.Join(active, " ")+` ' in *" $2 "*) echo active ;; *) echo inactive; exit 3 ;; esac ;;
-daemon-reload | stop) printf '%s\n' "$*" >>'`+asked+`' ;;
+	shtest.Stub(t, dir, "systemctl", `loaded=' `+strings.Join(loaded, " ")+` '
+active=' `+strings.Join(active, " ")+` '
+case "$1" in
+is-active) case "$active" in *" $2 "*) echo active ;; *) case "$loaded" in *" $2 "*) echo inactive; exit 3 ;; *) echo inactive; exit 4 ;; esac ;; esac ;;
+show) [ "$2 $3 $4" = '-p LoadState --value' ] || exit 64; case "$loaded" in *" $5 "*) echo loaded ;; *) echo not-found ;; esac ;;
+daemon-reload) printf '%s\n' "$*" >>'`+asked+`' ;;
+stop) printf '%s\n' "$*" >>'`+asked+`'; shift; rc=0
+	for u; do case "$loaded" in *" $u "*) ;; *) echo "Failed to stop $u: Unit $u not loaded." >&2; rc=5 ;; esac; done
+	exit $rc ;;
 *) echo "systemctl: not expected: $*" >&2; exit 64 ;;
 esac`)
 	return asked
 }
 
+// sepOf sets sep, in a made-up engine, to what the stop's inspect format
+// puts between the fields, the character after {{.Id}} in $3: the engine
+// renders the separator the script asks for, whatever it is.
+const sepOf = `sep=${3#'{{.Id}}'}; sep=${sep%"${sep#?}"}`
+
 // engine is a made-up docker or podman: its containers by id, each with a
 // name and a restart policy, the ones running, live-restore, and every
-// stop it is asked for noted in the file it returns.
+// stop it is asked for noted in the file it returns. Its inspect gives id,
+// name, policy and AutoRemove (false), as the stop's format asks.
 func engineStub(t *testing.T, dir, name string, policies map[string]string, running []string, liveRestore bool) (asked string) {
 	t.Helper()
 	asked = filepath.Join(dir, name+".asked")
 	// The loop below needs a command in it even with no container.
 	inspect := ":\n"
 	for _, id := range running {
-		inspect += `[ "$i" = ` + id + ` ] && echo '` + id + ` /` + id + `-name ` + policies[id] + `'` + "\n"
+		inspect += `[ "$i" = ` + id + ` ] && echo "` + id + `${sep}/` + id + `-name${sep}` + policies[id] + `${sep}false"` + "\n"
 	}
 	shtest.Stub(t, dir, name, `case "$1" in
 info) [ "$2" = --format ] && echo `+strconv.FormatBool(liveRestore)+`; exit 0 ;;
 ps) for i in `+strings.Join(running, " ")+`; do echo "$i"; done ;;
-inspect) shift 3; for i in "$@"; do
+inspect) `+sepOf+`; shift 3; for i in "$@"; do
 `+inspect+`done ;;
 stop) printf '%s\n' "$*" >>'`+asked+`' ;;
 *) echo "`+name+`: not expected: $*" >&2; exit 64 ;;
@@ -347,7 +376,8 @@ func TestDockersDaemonStopsItsContainersWithTheTimeLeft(t *testing.T) {
 	files["var/lib/wsl-spawner/"] = ""
 	root := tree(t, files)
 	dir := shtest.Tools(t, "mv", "mkdir")
-	sysAsked := systemd(t, dir, "docker.service")
+	// Docker's packages put its socket beside the service, running with it.
+	sysAsked := systemd(t, dir, "docker.service", "docker.socket")
 	dockAsked := engineStub(t, dir, "docker", map[string]string{"aaa": "unless-stopped", "bbb": "no", "ccc": "always"}, []string{"aaa", "bbb", "ccc"}, false)
 	ls, out := stopIn(t, dir, root, StopOptions{Limit: 400 * time.Second})
 	if end(ls) != "clean" {
@@ -374,6 +404,64 @@ func TestDockersDaemonStopsItsContainersWithTheTimeLeft(t *testing.T) {
 	// The plan said it first, with the count.
 	if ls[0] != (StopLine{Kind: "plan", Step: StepDocker, Count: 3}) {
 		t.Fatalf("plan %+v", ls[0])
+	}
+}
+
+func TestADockerWhoseDaemonIsNotThisDistributionsIsLeftAlone(t *testing.T) {
+	// A docker command answers, but no daemon of this distribution's is
+	// there: systemd has no unit of Docker's, and no pid file names a
+	// dockerd. Docker Desktop's WSL integration, or Podman's docker
+	// command, are so. Its containers are not noted, not stopped, and no
+	// step fails for it; lines of docker an earlier stop noted go.
+	for _, tc := range []struct {
+		name    string
+		systemd bool
+	}{{"with systemd", true}, {"without systemd", false}} {
+		files := proc("systemd")
+		if tc.systemd {
+			files["run/systemd/system/"] = ""
+		}
+		files["var/lib/wsl-spawner/resume"] = "docker abc web\npodman ff00 cache\n"
+		root := tree(t, files)
+		dir := shtest.Tools(t, "mv", "mkdir")
+		// systemd has nothing of Docker's.
+		sysAsked := systemdWith(t, dir, nil, nil)
+		dockAsked := engineStub(t, dir, "docker", map[string]string{"aa11": "always", "bb22": "no"}, []string{"aa11", "bb22"}, false)
+		ls, out := stopIn(t, dir, root, StopOptions{})
+		if end(ls) != "clean" || slices.Contains(kinds(ls), "plan:docker") || slices.Contains(kinds(ls), "start:docker") {
+			t.Errorf("%s: %q\n%s", tc.name, kinds(ls), out)
+		}
+		// Nothing of it is noted to come back; Podman's line, whose engine
+		// is not here, stays.
+		if got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resume")); !slices.Equal(got, []string{"podman ff00 cache"}) {
+			t.Errorf("%s: resume %q", tc.name, got)
+		}
+		// Nothing was stopped, by Docker or by systemd.
+		if got := lines(t, dockAsked); got != nil {
+			t.Errorf("%s: docker asked %q", tc.name, got)
+		}
+		if got := lines(t, sysAsked); got != nil {
+			t.Errorf("%s: systemctl asked %q", tc.name, got)
+		}
+	}
+}
+
+func TestDockersSocketIsStoppedOnlyWhereItIsThere(t *testing.T) {
+	// A docker.service with no socket unit beside it, written by hand or
+	// left by an older package: a stop that named the socket too failed
+	// with 5, and every stop of the distribution with it.
+	files := proc("systemd")
+	files["run/systemd/system/"] = ""
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mkdir")
+	asked := systemd(t, dir, "docker.service")
+	engineStub(t, dir, "docker", map[string]string{"aaa": "always"}, []string{"aaa"}, false)
+	ls, out := stopIn(t, dir, root, StopOptions{})
+	if end(ls) != "clean" {
+		t.Fatalf("%q\n%s", kinds(ls), out)
+	}
+	if got := lines(t, asked); !slices.Equal(got, []string{"daemon-reload", "stop docker.service"}) {
+		t.Fatalf("systemctl asked %q", got)
 	}
 }
 
@@ -436,7 +524,7 @@ printf '%s\n' "$1" >>'`+limits+`'; shift; exec "$@"`)
 	shtest.Stub(t, dir, "docker", `case "$1" in
 info) [ "$2" = --format ] && echo false; exit 0 ;;
 ps) echo aaa ;;
-inspect) echo inspect >>'`+order+`'; echo 'aaa /web always' ;;
+inspect) echo inspect >>'`+order+`'; `+sepOf+`; echo "aaa${sep}/web${sep}always${sep}false" ;;
 *) echo "docker: not expected: $*" >&2; exit 64 ;;
 esac`)
 	systemd(t, dir, "docker.service")
@@ -481,7 +569,8 @@ func TestLiveRestoreStopsTheContainersFirst(t *testing.T) {
 	files["run/systemd/system/"] = ""
 	root := tree(t, files)
 	dir := shtest.Tools(t, "mkdir")
-	sysAsked := systemd(t, dir, "docker.service")
+	// The socket beside the service, as Docker's packages put it.
+	sysAsked := systemd(t, dir, "docker.service", "docker.socket")
 	dockAsked := engineStub(t, dir, "docker", map[string]string{"aaa": "no", "bbb": "no"}, []string{"aaa", "bbb"}, true)
 	ls, _ := stopIn(t, dir, root, StopOptions{})
 	if end(ls) != "clean" {
@@ -502,10 +591,13 @@ func TestWhatComesBackFollowsTheSetting(t *testing.T) {
 		"policy":  {"docker aaa aaa-name", "docker ccc ccc-name"},
 		"off":     nil,
 	} {
-		files := proc("init")
+		// Docker's daemon is this distribution's: systemd runs it.
+		files := proc("systemd")
+		files["run/systemd/system/"] = ""
 		files["var/lib/wsl-spawner/"] = ""
 		root := tree(t, files)
-		dir := shtest.Tools(t, "mv")
+		dir := shtest.Tools(t, "mv", "mkdir")
+		systemd(t, dir, "docker.service")
 		engineStub(t, dir, "docker", policies, []string{"aaa", "bbb", "ccc", "ddd"}, false)
 		stopIn(t, dir, root, StopOptions{Resume: resume})
 		if got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resume")); !slices.Equal(got, want) {
@@ -542,10 +634,12 @@ func TestWithoutSystemdTheDaemonIsAskedToStopAndWaitedFor(t *testing.T) {
 	}
 }
 
-func TestWithoutSystemdADaemonThatCannotBeAskedFailsTheStep(t *testing.T) {
-	// Docker answers, but there is no pid to ask its daemon by, or the pid
-	// is of no process: the daemon was never asked to stop, and WSL ends it
-	// with its containers.
+func TestWithoutSystemdADockerWithNoDaemonToAskIsLeftAlone(t *testing.T) {
+	// Docker answers, but there is no pid to ask a daemon by, or the pid is
+	// of no process: no daemon here is this distribution's, so the docker
+	// command answers for another's, as Docker Desktop's integration does.
+	// Nothing of it is planned or stopped, and the stop ends clean; a stop
+	// that failed for it failed at every sign-out.
 	for name, pidFile := range map[string]string{"no pid file": "", "a pid of no process": "2147483646\n"} {
 		files := proc("init")
 		if pidFile != "" {
@@ -553,23 +647,22 @@ func TestWithoutSystemdADaemonThatCannotBeAskedFailsTheStep(t *testing.T) {
 		}
 		root := tree(t, files)
 		dir := shtest.Tools(t)
-		engineStub(t, dir, "docker", nil, nil, false)
+		asked := engineStub(t, dir, "docker", nil, nil, false)
 		ls, out := stopIn(t, dir, root, StopOptions{})
-		if end(ls) != "failed" {
+		if end(ls) != "clean" || slices.Contains(kinds(ls), "start:docker") {
 			t.Fatalf("%s: %q\n%s", name, kinds(ls), out)
 		}
-		for _, l := range ls {
-			if l.Kind == "done" && l.Step == StepDocker && l.Code == 0 {
-				t.Fatalf("%s: the docker step said it went well\n%s", name, out)
-			}
+		if got := lines(t, asked); got != nil {
+			t.Fatalf("%s: docker asked %q", name, got)
 		}
 	}
 }
 
 func TestAPidFileLeftByAnotherProcessIsNotSignalled(t *testing.T) {
 	// The pid file names a process that is not dockerd: its number was
-	// given since to another program. That one is not sent TERM, and the
-	// step fails, as the daemon was never asked.
+	// given since to another program. That one is not sent TERM; no daemon
+	// here is this distribution's, so Docker is left alone, and no step
+	// fails for it.
 	other := exec.Command("sleep", "60")
 	if err := other.Start(); err != nil {
 		t.Skip("no sleep")
@@ -584,13 +677,35 @@ func TestAPidFileLeftByAnotherProcessIsNotSignalled(t *testing.T) {
 	dir := shtest.Tools(t, "sleep")
 	engineStub(t, dir, "docker", nil, nil, false)
 	ls, out := stopIn(t, dir, root, StopOptions{})
-	if end(ls) != "failed" {
+	if end(ls) != "clean" || slices.Contains(kinds(ls), "start:docker") {
 		t.Fatalf("%q\n%s", kinds(ls), out)
 	}
 	select {
 	case err := <-done:
 		t.Fatalf("the other process was ended: %v\n%s", err, out)
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestAContainerThatNamesNoRestartPolicyIsReadByItsFields(t *testing.T) {
+	// A restart policy may be named by nothing at all, an empty field, as
+	// Podman may give it. Split on blanks, the field after it moved into
+	// its place: one run with --rm stayed on the list, and the next start
+	// said it was gone.
+	files := proc("init")
+	files["var/lib/wsl-spawner/"] = ""
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mv")
+	shtest.Stub(t, dir, "podman", `case "$1" in
+info) exit 0 ;;
+ps) printf '%s\n' cc33 dd44 ;;
+inspect) `+sepOf+`; printf '%s\n' "cc33${sep}ccc33${sep}${sep}true" "dd44${sep}ddd44${sep}${sep}false" ;;
+stop) ;;
+*) echo "podman: not expected: $*" >&2; exit 64 ;;
+esac`)
+	ls, out := stopIn(t, dir, root, StopOptions{})
+	if got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resume")); !slices.Equal(got, []string{"podman dd44 ddd44"}) {
+		t.Fatalf("resume %q\n%q\n%s", got, kinds(ls), out)
 	}
 }
 
@@ -692,29 +807,33 @@ func TestTheContainersOfAnEngineThatDoesNotAnswerStayToBringBack(t *testing.T) {
 	// The last start kept these until their engine answers; a stop while
 	// it still does not knows nothing new of them, and keeps them. A line
 	// of anything but the two engines goes, as the next start would run
-	// its first word.
+	// its first word, and one whose id is not hex, as the next start would
+	// hand it to that engine as an argument.
 	for _, tc := range []struct {
 		name, resume string
 		answers      bool
 		want         []string
 	}{
-		{"nothing answers", "running", false, []string{"docker abc web", "podman ppp cache"}},
+		{"nothing answers", "running", false, []string{"docker abc web", "podman ff00 cache"}},
 		// Docker answers: its lines are what runs now; Podman's stay.
-		{"docker answers", "running", true, []string{"docker aaa aaa-name", "podman ppp cache"}},
+		{"docker answers", "running", true, []string{"docker aaa aaa-name", "podman ff00 cache"}},
 		// Nothing comes back at all: nothing is kept.
 		{"resume off", "off", false, nil},
 	} {
-		files := proc("init")
-		files["var/lib/wsl-spawner/resume"] = "docker abc web\npodman ppp cache\nrm -rf /tmp/x\n"
+		// Docker's daemon is this distribution's, systemd's to run: it runs
+		// where it answers.
+		files := proc("systemd")
+		files["run/systemd/system/"] = ""
+		files["var/lib/wsl-spawner/resume"] = "docker abc web\npodman ff00 cache\nrm -rf /tmp/x\npodman --latest x\ndocker ABC upper\n"
 		root := tree(t, files)
-		dir := shtest.Tools(t, "mv")
+		dir := shtest.Tools(t, "mv", "mkdir")
 		if tc.answers {
+			systemd(t, dir, "docker.service")
 			engineStub(t, dir, "docker", map[string]string{"aaa": "no"}, []string{"aaa"}, false)
 		} else {
+			systemdWith(t, dir, []string{"docker.service"}, nil)
 			shtest.Stub(t, dir, "docker", `echo 'Cannot connect to the Docker daemon' >&2; exit 1`)
 		}
-		// Without systemd and a pid file, an answering daemon's own stop
-		// fails: only the list is looked at here.
 		ls, out := stopIn(t, dir, root, StopOptions{Resume: tc.resume})
 		if got := lines(t, filepath.Join(root, "var/lib/wsl-spawner/resume")); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: resume %q\n%q\n%s", tc.name, got, kinds(ls), out)
@@ -725,18 +844,21 @@ func TestTheContainersOfAnEngineThatDoesNotAnswerStayToBringBack(t *testing.T) {
 func TestContainersRemovedBeforeTheEngineStopsAreNotBroughtBack(t *testing.T) {
 	// A hook removes db, as docker compose down does; tmp runs with --rm,
 	// so its engine removes it as it stops. Neither is there to start
-	// again: the next start would find them gone.
-	files := proc("init")
+	// again: the next start would find them gone. Docker's daemon is this
+	// distribution's, systemd's to run.
+	files := proc("systemd")
+	files["run/systemd/system/"] = ""
 	files["var/lib/wsl-spawner/"] = ""
 	root := tree(t, files)
-	dir := shtest.Tools(t, "mv")
+	dir := shtest.Tools(t, "mv", "mkdir")
+	systemd(t, dir, "docker.service")
 	removed := filepath.Join(root, "db-removed")
 	shtest.Stub(t, dir, "docker", `case "$1 $2" in
 'info ') exit 0 ;;
 'info --format') echo false ;;
 'ps -q') printf '%s\n' aaa bbb ccc ;;
 'ps -aq') echo aaa; [ -f '`+removed+`' ] || echo bbb; echo ccc ;;
-'inspect --format') echo 'aaa /web no false'; echo 'bbb /db no false'; echo 'ccc /tmp no true' ;;
+'inspect --format') `+sepOf+`; echo "aaa${sep}/web${sep}no${sep}false"; echo "bbb${sep}/db${sep}no${sep}false"; echo "ccc${sep}/tmp${sep}no${sep}true" ;;
 *) echo "docker: not expected: $*" >&2; exit 64 ;;
 esac`)
 	p := filepath.Join(root, "etc/wsl-spawner/pre-stop.d/10-down")
@@ -752,16 +874,18 @@ esac`)
 	}
 	// An engine that does not say which containers it has leaves the list
 	// as it is: none is dropped on a guess.
-	files = proc("init")
+	files = proc("systemd")
+	files["run/systemd/system/"] = ""
 	files["var/lib/wsl-spawner/"] = ""
 	root = tree(t, files)
-	dir = shtest.Tools(t, "mv")
+	dir = shtest.Tools(t, "mv", "mkdir")
+	systemd(t, dir, "docker.service")
 	shtest.Stub(t, dir, "docker", `case "$1 $2" in
 'info ') exit 0 ;;
 'info --format') echo false ;;
 'ps -q') echo aaa ;;
 'ps -aq') exit 1 ;;
-'inspect --format') echo 'aaa /web no false' ;;
+'inspect --format') `+sepOf+`; echo "aaa${sep}/web${sep}no${sep}false" ;;
 *) echo "docker: not expected: $*" >&2; exit 64 ;;
 esac`)
 	p = filepath.Join(root, "etc/wsl-spawner/pre-stop.d/10-noop")
@@ -892,5 +1016,247 @@ func TestTheUnitsAreStoppedByTheirNamesAlone(t *testing.T) {
 	stopIn(t, dir, root, StopOptions{})
 	if got := lines(t, asked); !slices.Equal(got, []string{"stop *.go"}) {
 		t.Fatalf("systemctl asked %q", got)
+	}
+}
+
+// lockWays are the ways a stop keeps a second one out, by the tools that
+// make each: flock where the distribution has it, else a folder in /run
+// holding the stop's pid. Each with sleep, for a hook that waits.
+func lockWays(t *testing.T) map[string][]string {
+	t.Helper()
+	ways := map[string][]string{"a folder": {"mkdir", "sleep", "mv"}}
+	// Where this machine has flock. BusyBox's sh runs its own flock where
+	// it has one, and the PATH's otherwise.
+	if _, err := exec.LookPath("flock"); err == nil {
+		ways["flock"] = []string{"mkdir", "sleep", "mv", "flock"}
+	}
+	return ways
+}
+
+// waitFor waits until the file at p is there, ten seconds at most.
+func waitFor(t *testing.T, p string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(p); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never came", p)
+		}
+	}
+}
+
+func TestASecondStopWhileOneRunsSaysBusyAndChangesNothing(t *testing.T) {
+	// A stop asked by hand is still at work when the sign-out hook's own
+	// stop starts: the second ran every hook again and wrote its own list
+	// of what comes back while the engines went down. It now says busy
+	// before anything else and changes nothing; the first goes on.
+	for way, tools := range lockWays(t) {
+		files := proc("init")
+		files["var/lib/wsl-spawner/resume"] = "docker abc web\n"
+		root := tree(t, files)
+		dir := shtest.Tools(t, tools...)
+		// The hook notes each run, says it began, and holds its stop a while.
+		ran, began := filepath.Join(root, "ran"), filepath.Join(root, "began")
+		p := filepath.Join(root, "etc/wsl-spawner/pre-stop.d/10-slow")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!"+shPath(t)+"\necho run >>'"+ran+"'\n: >'"+began+"'\nsleep 2\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script, err := StopScript(StopOptions{Limit: time.Minute, Resume: "running", By: "hand", Now: time.Unix(1700000000, 0)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The first stop, in the background; what it printed comes back.
+		first := make(chan string, 1)
+		go func() {
+			out, _ := shtest.Run(t, dir, "R='"+root+"'\n"+script)
+			first <- out
+		}()
+		waitFor(t, began)
+		ls, out := stopIn(t, dir, root, StopOptions{By: "signout"})
+		if !slices.Equal(kinds(ls), []string{"end:busy"}) {
+			t.Errorf("%s: the second stop: %q\n%s", way, kinds(ls), out)
+		}
+		outA := <-first
+		if !strings.Contains(outA, "end=clean\n") {
+			t.Errorf("%s: the first stop:\n%s", way, outA)
+		}
+		// The hook ran once; the list is as the first stop left it.
+		if got := read(t, root, "ran"); got != "run\n" {
+			t.Errorf("%s: the hook ran %q", way, got)
+		}
+		if got := read(t, root, "var/lib/wsl-spawner/resume"); got != "docker abc web\n" {
+			t.Errorf("%s: resume %q", way, got)
+		}
+		// Once the first is done, a stop runs again.
+		if ls, out := stopIn(t, dir, root, StopOptions{}); end(ls) != "clean" {
+			t.Errorf("%s: a stop after: %q\n%s", way, kinds(ls), out)
+		}
+	}
+}
+
+func TestAProgramAHookLeavesRunningHoldsNoStopsLock(t *testing.T) {
+	// A hook may start a program that outlives it. The lock is not handed
+	// to it: once the stop is done, the next one runs.
+	for way, tools := range lockWays(t) {
+		root := tree(t, proc("init"))
+		dir := shtest.Tools(t, tools...)
+		p := filepath.Join(root, "etc/wsl-spawner/pre-stop.d/10-leaves")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Its own output closed, so the test does not wait for it; it ends
+		// by itself a moment later.
+		if err := os.WriteFile(p, []byte("#!"+shPath(t)+"\nsleep 3 >/dev/null 2>&1 &\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if ls, out := stopIn(t, dir, root, StopOptions{}); end(ls) != "clean" {
+			t.Fatalf("%s: %q\n%s", way, kinds(ls), out)
+		}
+		if ls, out := stopIn(t, dir, root, StopOptions{}); end(ls) != "clean" {
+			t.Errorf("%s: the next stop: %q\n%s", way, kinds(ls), out)
+		}
+	}
+}
+
+func TestAStopTakesOverTheLockOfOneThatIsGone(t *testing.T) {
+	// A stop whose process was ended before its own end left its folder in
+	// /run, which holds a pid of no process now: the next stop takes it
+	// over. One with no pid in it is taken over too.
+	for name, pid := range map[string]string{"a pid of no process": "2147483646\n", "no pid": ""} {
+		files := proc("init")
+		files["run/wsl-spawner/stop/pid"] = pid
+		root := tree(t, files)
+		ls, out := stopIn(t, shtest.Tools(t, "mkdir"), root, StopOptions{})
+		if end(ls) != "clean" {
+			t.Errorf("%s: %q\n%s", name, kinds(ls), out)
+		}
+	}
+}
+
+func TestARecordThatCannotBeWrittenFailsTheStopAndLeavesTheOldOne(t *testing.T) {
+	// A full disk or a file system gone read-only refuses a write: the list
+	// of what comes back and the stop's record stay as they were, never
+	// emptied, and the stop failed, as a step of its own says. A clean
+	// stop with an empty list and an empty record said nothing came back
+	// and read as one cut short.
+	const oldList = "docker abc web\n"
+	const oldRecord = "run=b@1\nat=1\ntook=1\nresult=clean\nby=hand\n"
+	for _, tc := range []struct {
+		name string
+		// prelude is run first in the script's shell; folder is a file of
+		// the state's own made a folder, so that it cannot be written.
+		prelude, folder string
+		// records are the record steps that fail: the list, the record, or
+		// both.
+		records int
+	}{
+		// No file grows past 0 bytes, as on a full disk, and the signal
+		// that ends a program for trying is ignored, as a full disk sends
+		// none.
+		{"nothing can be written", "trap '' XFSZ\nulimit -f 0\n", "", 2},
+		// The record's own file cannot be made.
+		{"the record cannot be made", "", "last-stop.new/", 1},
+		// The list's own file cannot be made: the script went no further,
+		// as the shell ends a script whose : cannot redirect.
+		{"the list cannot be made", "", "resume.new/", 1},
+	} {
+		files := proc("init")
+		files["var/lib/wsl-spawner/resume"] = oldList
+		files["var/lib/wsl-spawner/last-stop"] = oldRecord
+		if tc.folder != "" {
+			files["var/lib/wsl-spawner/"+tc.folder] = ""
+		}
+		root := tree(t, files)
+		ls, out := stopInWith(t, shtest.Tools(t, "mv"), root, tc.prelude, StopOptions{})
+		if end(ls) != "failed" {
+			t.Errorf("%s: %q\n%s", tc.name, kinds(ls), out)
+		}
+		// Each write that failed is said as a step that failed.
+		failed := 0
+		for _, l := range ls {
+			if l.Kind == "done" && l.Step == StepRecord && l.Code != 0 {
+				failed++
+			}
+		}
+		if failed != tc.records {
+			t.Errorf("%s: %d record steps failed, want %d: %q\n%s", tc.name, failed, tc.records, kinds(ls), out)
+		}
+		// What could not be written leaves the file as it was.
+		if tc.folder != "last-stop.new/" {
+			if got := read(t, root, "var/lib/wsl-spawner/resume"); got != oldList {
+				t.Errorf("%s: resume %q", tc.name, got)
+			}
+		}
+		if tc.folder != "resume.new/" {
+			if got := read(t, root, "var/lib/wsl-spawner/last-stop"); got != oldRecord {
+				t.Errorf("%s: last-stop %q", tc.name, got)
+			}
+		}
+	}
+}
+
+func TestHooksRunFromTheRootNotFromTheFolderWslExeHandsOver(t *testing.T) {
+	// wsl.exe starts the script in Windows' own folder, /mnt/c/Windows: a
+	// hook that writes a relative path, or a docker compose with no -f,
+	// would work there. The stop runs from the root, here the made-up one;
+	// the test runs from this package's folder, which stands for Windows'.
+	dir := shtest.Tools(t)
+	root := tree(t, proc("init"))
+	// The hook notes the folder it runs in, as the system names it.
+	where := filepath.Join(root, "where")
+	p := filepath.Join(root, "etc/wsl-spawner/pre-stop.d/10-where")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("#!"+shPath(t)+"\npwd -P >>'"+where+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ls, out := stopIn(t, dir, root, StopOptions{})
+	// The made-up root as the system names it, links followed.
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(read(t, root, "where")); got != want {
+		t.Fatalf("the hook ran in %q, not %q\n%q\n%s", got, want, kinds(ls), out)
+	}
+}
+
+func TestAStopNeverStartsADockerThatSleepsBehindItsSocket(t *testing.T) {
+	// The daemon was stopped by hand and its socket listens: asking it
+	// anything would start it, and the stop would start it only to stop it
+	// again, its containers with it. It is not asked, nothing of Docker is
+	// planned, and the stop ends clean.
+	files := proc("systemd")
+	files["run/systemd/system/"] = ""
+	files["var/lib/wsl-spawner/"] = ""
+	root := tree(t, files)
+	dir := shtest.Tools(t, "mv", "mkdir")
+	sysAsked := filepath.Join(dir, "systemctl.asked")
+	shtest.Stub(t, dir, "systemctl", `case "$*" in
+'is-active docker.socket') echo active ;;
+'is-active docker.service') echo inactive; exit 3 ;;
+is-active*) echo inactive; exit 3 ;;
+*) printf '%s\n' "$*" >>'`+sysAsked+`' ;;
+esac`)
+	dockAsked := filepath.Join(dir, "docker.asked")
+	shtest.Stub(t, dir, "docker", `echo "$*" >>'`+dockAsked+`'; exit 0`)
+	ls, out := stopIn(t, dir, root, StopOptions{})
+	if end(ls) != "clean" {
+		t.Fatalf("%q\n%s", kinds(ls), out)
+	}
+	if _, err := os.Stat(dockAsked); err == nil {
+		t.Fatalf("docker was asked: %q", lines(t, dockAsked))
+	}
+	if slices.Contains(kinds(ls), "plan:docker") || slices.Contains(kinds(ls), "start:docker") {
+		t.Fatalf("a step of Docker's: %q", kinds(ls))
+	}
+	// Nothing was stopped through systemd either.
+	if _, err := os.Stat(sysAsked); err == nil {
+		t.Fatalf("systemctl changed something: %q", lines(t, sysAsked))
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,8 +51,10 @@ func uninstallCmd(p *apps) *cobra.Command {
 			"distribution. Then it removes wsl-spawner.exe, wsl-spawnerw.exe and the launcher\n" +
 			"for WSL from the folder they run from, and that folder and its PATH entry when\n" +
 			"it is named wsl-spawner and nothing else is in it. The settings and the history\n" +
-			"stay unless --purge is given. A wsl-spawner installed with Scoop is removed with\n" +
-			"Scoop.",
+			"stay unless --purge is given. The program stays where this terminal may not\n" +
+			"remove it: installed with Scoop, scoop uninstall wsl-spawner removes it after;\n" +
+			"under Program Files, wsl-spawner uninstall in a terminal opened as\n" +
+			"administrator does.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A settings file that does not load is no obstacle: it may be
@@ -65,7 +68,7 @@ func uninstallCmd(p *apps) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&purge, "purge", false, "remove the settings and the history too")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "uninstall without asking")
 	return cmd
 }
 
@@ -96,10 +99,11 @@ func uninstall(cmd *cobra.Command, a *app.App, purge, yes bool) error {
 	}
 	settings := filepath.Dir(config.Path(appData))
 	scoop := byScoop(dir)
-	if scoop && !purge {
-		return hint(errors.New("this wsl-spawner was installed with Scoop"), "wsl-spawner uninstall --purge takes out what it put on this PC and removes the settings and the history; then scoop uninstall wsl-spawner removes the program")
-	}
 	plan := uninstallPlan{exe: exe, dir: dir, settings: settings, state: a.Dir, scoop: scoop, purge: purge}
+	// A program this user may not delete, as one an administrator put
+	// under Program Files, is the administrator's to remove: the rest goes,
+	// and the program stays, as Scoop's does.
+	plan.adminsOwn = !scoop && !plan.deletable(pc)
 	plan.leftovers(cmd.Context(), a)
 	// A hook that cannot come out stops it all, as one Windows' answer
 	// keeps would: left behind, every sign-out would start a program that
@@ -107,6 +111,15 @@ func uninstall(cmd *cobra.Command, a *app.App, purge, yes bool) error {
 	// to put the file right.
 	if plan.cannot != nil {
 		return unsureHint(fmt.Errorf("nothing was removed: the sign-out hook cannot be taken out of the sign-out scripts as they are: %w", plan.cannot))
+	}
+	// A standard user whose program anyone else could change is refused
+	// the administrator's permission it would take: said before the
+	// question, with the way the hook comes out instead.
+	if run := plan.elevates(pc); run != "" {
+		if err := nobodyElseElevates(pc, run, "remove"); err != nil {
+			msg, what := splitHint(err)
+			return hint(errors.New("nothing was removed: the sign-out hook stays, as "+msg), what)
+		}
 	}
 	if err := plan.blocked(pc); err != nil {
 		return err
@@ -123,7 +136,7 @@ func uninstall(cmd *cobra.Command, a *app.App, purge, yes bool) error {
 		}
 		plan.say(cmd.ErrOrStderr())
 		q := "Uninstall? [y/N] "
-		if scoop {
+		if scoop || plan.adminsOwn {
 			q = "Take these out? [y/N] "
 		}
 		if err := confirm(cmd, q, "not uninstalled"); err != nil {
@@ -146,6 +159,10 @@ func uninstall(cmd *cobra.Command, a *app.App, purge, yes bool) error {
 type uninstallPlan struct {
 	exe, dir, settings, state, why string
 	scoop, own, inPath, purge      bool
+	// adminsOwn is set when this process may not delete the program's files,
+	// as those under Program Files for anyone not elevated: the program
+	// stays, as Scoop's does, for an uninstall run as administrator.
+	adminsOwn bool
 	// hook is the sign-out hook's program, "" when there is none; logon
 	// is set when the sign-in program is there.
 	hook  string
@@ -207,10 +224,45 @@ func (p *uninstallPlan) leftovers(ctx context.Context, a *app.App) {
 	}
 }
 
+// deletable reports whether this user may delete the program's files, as
+// Windows answers it, without deleting any: no to any of them is no. One
+// Windows gives no answer for, in use or not there, counts as yes: the
+// removal itself says how it went. A process run as administrator is not
+// asked: it is the one a program under Program Files is left to, and
+// Windows' answer for one is not always the access lists'.
+func (p uninstallPlan) deletable(pc app.PC) bool {
+	if pc.CanDelete == nil || pc.Elevated() {
+		return true
+	}
+	for _, f := range programFiles {
+		path := filepath.Join(p.dir, f)
+		if st, err := os.Lstat(path); err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		if errors.Is(pc.CanDelete(path), fs.ErrPermission) {
+			return false
+		}
+	}
+	return true
+}
+
+// elevates is the program Windows would start as an administrator for the
+// hook's removal, "" when none is: no hook to take out, or this process
+// is one already.
+func (p uninstallPlan) elevates(pc app.PC) string {
+	switch {
+	case p.hook == "" && len(p.gone) == 0, pc.Elevated():
+		return ""
+	case p.noQuiet:
+		return p.exe
+	}
+	return p.quiet
+}
+
 // blocked says what stands in the way of an uninstall now: for a program
-// not Scoop's, a copy of it still running, or a screen open in WSL.
+// it removes, a copy of it still running, or a screen open in WSL.
 func (p uninstallPlan) blocked(pc app.PC) error {
-	if p.scoop {
+	if p.scoop || p.adminsOwn {
 		return nil
 	}
 	// A copy still running holds the program's file: it would stay behind,
@@ -245,15 +297,14 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 	// hooks of copies that are gone go with it, or on their own.
 	if p.hook != "" || len(p.gone) > 0 {
 		var err error
-		switch {
-		case pc.Elevated():
+		switch run := p.elevates(pc); {
+		case run == "":
 			err = change(pc, false, p.quiet, p.gone)
-		case p.noQuiet:
-			// No quiet build, as when a virus scanner took it: this program,
-			// started hidden, takes the hook out as well.
-			err = changeAsAdmin(pc, false, exe)
 		default:
-			err = changeAsAdmin(pc, false, p.quiet)
+			// The quiet build, or, without it, as when a virus scanner took
+			// it, this program, started hidden: the hook must come out.
+			// Who else could change it was asked before the question.
+			err = changeAsAdmin(pc, false, run)
 		}
 		// What went, as the end says it.
 		what := "the sign-out hook"
@@ -266,13 +317,22 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 		case errors.As(err, &ns):
 			// No copy could be started as an administrator: trying again
 			// may not help, one run as one from the start does.
-			return hint(fmt.Errorf("the sign-out hook stays: %w", ns.error), "nothing was removed; in a terminal run as administrator, wsl-spawner hook remove takes it out, then wsl-spawner uninstall")
+			return hint(fmt.Errorf("nothing was removed: the sign-out hook stays: %w", ns.error), "in a terminal run as administrator, wsl-spawner hook remove takes it out, then wsl-spawner uninstall")
+		case errors.Is(err, errDeclined):
+			// No was the answer: asked again by the same command.
+			return hint(fmt.Errorf("nothing was removed: %w", errDeclined), "wsl-spawner uninstall asks again")
 		case errors.As(err, &nr) && p.hook != "":
 			// Out of the policy's files, which is what counts from Windows'
 			// next reading: the uninstall goes on, and says so.
 			notes = append(notes, "took the sign-out hook out of the local Group Policy, but Windows has not read that yet ("+nr.Error()+"): the next sign-out may still try to start the program removed now")
 		case err != nil && !errors.As(err, &nr):
-			return hint(fmt.Errorf("the sign-out hook stays: %w", err), "nothing was removed; wsl-spawner uninstall tries again")
+			// What to do is the error's own when it says one: another
+			// line after it would say another thing.
+			msg, what := splitHint(err)
+			if what == "" {
+				what = "wsl-spawner uninstall tries again"
+			}
+			return hint(errors.New("nothing was removed: the sign-out hook stays: "+msg), what)
 		default:
 			// Done; for a copy that is gone, read or not: it starts nothing.
 			notes = append(notes, "took "+what+" out of the local Group Policy")
@@ -302,7 +362,7 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 	}
 	// What the settings and the history folders hold before anything goes.
 	kept := filled(settings, state)
-	if own {
+	if own && !p.adminsOwn {
 		// The PATH as stored, its other entries kept as they are written.
 		value, expand, err := pc.UserPath()
 		if err == nil {
@@ -316,7 +376,7 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 			return hint(fmt.Errorf("could not take %s out of your PATH: %w", dir, err), "the program was not removed; wsl-spawner uninstall tries again")
 		}
 	}
-	if !scoop {
+	if !scoop && !p.adminsOwn {
 		// The quiet build, the launcher and the copies: the program's own
 		// file is in use by this process until it ends.
 		for _, f := range programFiles[1:] {
@@ -327,7 +387,7 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 				continue
 			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return hint(err, exe+" uninstall tries again")
+				return hint(err, commandLine(exe)+" uninstall tries again")
 			}
 		}
 	}
@@ -355,9 +415,18 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 	for _, name := range p.unknown {
 		notes = append(notes, name+" does not run: what wsl-spawner may have set up in it stays (/etc/systemd/system/wsl-spawner*.service)")
 	}
-	if scoop {
-		head := "took out what wsl-spawner put on this PC"
-		sayDone(out, strings.Join(append(append([]string{head}, notes...), purged, "scoop uninstall wsl-spawner removes the program"), "\n"))
+	if scoop || p.adminsOwn {
+		// The program stays, its remover's to remove.
+		head, last := "took out what wsl-spawner put on this PC", "scoop uninstall wsl-spawner removes the program"
+		if p.adminsOwn {
+			last = "the program stays in " + dir + ": wsl-spawner uninstall in a terminal opened as administrator removes it"
+		}
+		lines := append([]string{head}, notes...)
+		// Nothing is said of the settings where none were there.
+		if purged != "" {
+			lines = append(lines, purged)
+		}
+		sayDone(out, strings.Join(append(lines, last), "\n"))
 		return nil
 	}
 	// The program itself, once it has ended; and its folder, when it is
@@ -448,6 +517,8 @@ func (p uninstallPlan) say(w io.Writer) {
 	switch {
 	case p.scoop:
 		line("keeps  ", "the program: scoop uninstall wsl-spawner removes it")
+	case p.adminsOwn:
+		line("keeps  ", "the program in "+p.dir+": wsl-spawner uninstall in a terminal opened as administrator removes it")
 	case p.own && p.inPath:
 		line("removes", p.exe+", wsl-spawnerw.exe and the launcher for WSL")
 		line("removes", "the folder "+p.dir+" and its entry in your PATH")
@@ -650,4 +721,13 @@ func expandVars(s string, lookup func(string) (string, bool)) string {
 		s = s[i+1:]
 	}
 	return b.String() + s
+}
+
+// commandLine is a program's path as a person types it to run it: in quotes
+// when it holds a blank, which would end it.
+func commandLine(exe string) string {
+	if strings.ContainsAny(exe, " \t") {
+		return `"` + exe + `"`
+	}
+	return exe
 }

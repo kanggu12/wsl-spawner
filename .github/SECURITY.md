@@ -27,8 +27,19 @@ of these:
 
 It makes no network connection.
 
+## Where it runs for other users
+
+The sign-out hook is in the local Group Policy, which applies to every user of the PC: Windows runs it as whoever signs
+out, and it starts the program of the user who installed it. `hook install` therefore refuses a program that anyone
+beyond its installer, the system and the administrators can change, or whose folder or a folder above can be changed,
+and `check` says it of a hook already installed. The elevated copy that changes the policy is the unsigned program you
+installed: Windows' prompt shows no publisher, so check that the path it names is the one you installed before you
+approve it.
+
 ## Checking a download
 
 `checksums.txt` lists the SHA-256 of each release zip, and `install.ps1` checks it before installing. GitHub signs the
-zips' build provenance: `gh attestation verify <zip> -R kanggu12/wsl-spawner` shows this repository's release workflow
-built them from the tagged commit.
+build provenance of every file of a release (the zips, `checksums.txt`, `install.ps1` and the Scoop manifest, from
+0.1.2 on; the zips alone before):
+`gh attestation verify <file> -R kanggu12/wsl-spawner` shows this repository's release workflow built it from the
+tagged commit. A file of a published release is never replaced.

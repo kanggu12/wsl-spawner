@@ -14,6 +14,14 @@
 # Only the shell picks text apart: a small distribution may have no text
 # tools.
 R="${R:-}"
+# Hooks and engines run from the root, not from the folder wsl.exe hands
+# over, Windows' own: a hook that writes a relative path, or a docker
+# compose with no -f, would work there. A test's made-up root stands for
+# it. Where that fails, the stop goes on where it is.
+cd "$R/" || :
+# What this script makes is readable by all and written by root alone,
+# whatever umask it is started with.
+umask 022
 # Tools are found where a distribution keeps them, snap's Docker in
 # /snap/bin included, as the probe finds them.
 [ -n "$R" ] || PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
@@ -25,8 +33,9 @@ NOW=${NOW:-0}
 
 # have reports whether a tool is on PATH.
 have() { command -v "$1" >/dev/null 2>&1; }
-# first prints the first line of a file, or nothing.
-first() { [ -r "$1" ] && { IFS= read -r l <"$1" || [ -n "$l" ]; } && printf '%s' "$l"; }
+# first prints the first line of a file, or nothing. Only a file is read: a
+# pipe or a device planted in its place would hold the script for ever.
+first() { [ -f "$1" ] && [ -r "$1" ] && { IFS= read -r l <"$1" || [ -n "$l" ]; } && printf '%s' "$l"; }
 # now is the kernel's uptime in whole seconds: the steps are timed by it, as
 # it never steps back the way a clock set from Windows may.
 now() { up=$(first "$R/proc/uptime"); printf '%s' "${up%%.*}"; }
@@ -35,7 +44,10 @@ t0=$(now)
 left() { echo $((LIMIT - ($(now) - t0))); }
 # limited runs a query with a time limit of its own, where timeout is there:
 # an engine whose daemon hangs must not hold the stop before it starts.
-limited() { if have timeout; then timeout "$@"; else shift; "$@"; fi; }
+# What it runs, and timeout's own watcher, which BusyBox's leaves a moment
+# behind, are not handed the stop's lock (descriptor 9, below): a program
+# left running would hold it after this stop.
+limited() { if have timeout; then timeout "$@" 9>&-; else shift; "$@" 9>&-; fi; }
 # upto prints how long a query may wait: its own limit, or the time left
 # when that is less. A second at least, as timeout takes 0 for no limit.
 upto() {
@@ -58,17 +70,18 @@ fi
 # signal it sent made of the command (143 for TERM), so a command that
 # failed once no time was left ran out of it, whichever said so. One that
 # went on past its time, TERM or not, ran out of it as well, whatever it
-# returned at the end.
+# returned at the end. Neither the command nor timeout is handed the
+# stop's lock, as with limited: a hook may leave a program running.
 within() {
 	l=$(left)
 	[ "$l" -gt 0 ] || return 124
 	have timeout || {
-		"$@"
+		"$@" 9>&-
 		return
 	}
 	# When it began, by the kernel's clock, to tell how long it went on.
 	within_s=$(now)
-	if [ -n "$killing" ]; then timeout -k 5 "$l" "$@"; else timeout "$l" "$@"; fi
+	if [ -n "$killing" ]; then timeout -k 5 "$l" "$@" 9>&-; else timeout "$l" "$@" 9>&-; fi
 	# A name of its own: the steps keep their codes in rc.
 	within_rc=$?
 	[ "$within_rc" -ne 0 ] && [ "$(left)" -le 0 ] && within_rc=124
@@ -91,6 +104,54 @@ done_step() {
 	printf 'step=%s\tdone\t%s\t%s\n' "$1" "$2" $(($(now) - $3))
 	note "$2"
 }
+# unwritten says a file of the stop's own that could not be written (a
+# full disk, a file system gone read-only), as a step of its own that
+# failed with the code of the write: the stop failed, and the file it was
+# to replace stays as it was.
+unwritten() {
+	printf 'step=record\tdone\t%s\t0\n' "$1"
+	note "$1"
+}
+
+# One stop at a time in a distribution. A second one while the first is
+# at work (a stop asked by hand, then the sign-out hook's) would run every
+# hook again and note what comes back from engines on their way down: it
+# says end=busy before anything else, and changes nothing; the first goes
+# on, and ends the distribution. The lock goes with the stop that holds it,
+# whatever ends that stop: flock's with its process; without flock, a
+# folder in /run, which each start of the distribution clears, holds the
+# pid of the stop that made it, and a later stop takes it over once that
+# process is gone. Where neither can be made, stops are not kept apart.
+busy() {
+	printf 'end=busy\n'
+	exit 0
+}
+locks="$R/run/wsl-spawner"
+# held is the lock folder this stop holds, which it lets go of at its end.
+held=""
+if have mkdir && mkdir -p "$locks" 2>/dev/null; then
+	if have flock; then
+		# Held on descriptor 9 for as long as this script runs. command keeps
+		# a file that cannot be opened from ending the script, as a failure
+		# of exec's own would.
+		if { command exec 9>>"$locks/stop.lock"; } 2>/dev/null; then
+			flock -n 9 || busy
+		fi
+	elif mkdir "$locks/stop" 2>/dev/null; then
+		held="$locks/stop"
+	else
+		# Another stop's folder: busy while the process it names runs. One
+		# that names none, or this very process, is taken over.
+		holder=$(first "$locks/stop/pid")
+		case "$holder" in
+		'' | *[!0-9]* | "$$") ;;
+		*) kill -0 "$holder" 2>/dev/null && busy ;;
+		esac
+		held="$locks/stop"
+	fi
+	# This stop's pid, in the folder it holds.
+	[ -n "$held" ] && printf '%s\n' "$$" 2>/dev/null >"$held/pid"
+fi
 
 # The state of this run of the distribution: the kernel's boot and when its
 # init started, as the probe names them.
@@ -152,7 +213,7 @@ trimmed() {
 # The units to stop first, one name a line in stop-units, with what time
 # each asks for in its own TimeoutStopSec.
 units=""
-if [ -n "$systemd" ] && [ -r "$R/etc/wsl-spawner/stop-units" ]; then
+if [ -n "$systemd" ] && [ -f "$R/etc/wsl-spawner/stop-units" ] && [ -r "$R/etc/wsl-spawner/stop-units" ]; then
 	while IFS= read -r u || [ -n "$u" ]; do
 		# The name alone, as systemd knows it.
 		u=$(trimmed "$u")
@@ -160,13 +221,49 @@ if [ -n "$systemd" ] && [ -r "$R/etc/wsl-spawner/stop-units" ]; then
 		[ "$(limited "$(upto 5)" systemctl is-active "$u" 2>/dev/null)" = active ] && units="$units $u"
 	done <"$R/etc/wsl-spawner/stop-units"
 fi
+# asleep reports whether Docker's daemon is not running while its socket
+# listens, as Docker's packages set it up: asking such a daemon anything
+# starts it, and a stop would start it only to stop it again.
+asleep() {
+	[ "$1" = docker ] && [ -n "$systemd" ] || return 1
+	[ "$(limited "$(upto 5)" systemctl is-active docker.socket 2>/dev/null)" = active ] || return 1
+	case "$(limited "$(upto 5)" systemctl is-active docker.service 2>/dev/null)" in
+	active | activating | reloading) return 1 ;;
+	esac
+	return 0
+}
+# own reports whether Docker's daemon is this distribution's, as the probe
+# judges it: systemd has its unit, Docker's own or snap's, or a pid file
+# names a dockerd that runs. Otherwise a docker command here answers for
+# another's, Docker Desktop's through its WSL integration or another
+# engine's behind a docker command, or for none: the stop leaves it alone.
+own() {
+	if [ -n "$systemd" ]; then
+		for u in docker.service snap.docker.dockerd.service; do
+			[ "$(limited "$(upto 5)" systemctl show -p LoadState --value "$u" 2>/dev/null)" = loaded ] && return 0
+		done
+	fi
+	# A pid file can outlive its daemon, its number given since to another
+	# program: only a dockerd counts. Only a number is a pid.
+	own_pid=$(first "$R/var/run/docker.pid")
+	case "$own_pid" in '' | *[!0-9]*) return 1 ;; esac
+	[ "$(first "$R/proc/$own_pid/comm")" = dockerd ]
+}
 # The container engines that answer, and what runs in each. Their time
 # counts as the steps' does, so each query waits the time left at most.
+# docker_foreign is set for a docker whose daemon is another's: it is not
+# asked, nothing of it is noted or stopped, no step fails for it, and the
+# lines of docker an earlier stop noted go.
 docker_up=""
-if have docker && limited "$(upto 15)" docker info >/dev/null 2>&1; then
-	docker_up=1
-	docker_running=$(limited "$(upto 15)" docker ps -q --no-trunc 2>/dev/null)
-	docker_lr=$(limited "$(upto 15)" docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null)
+docker_foreign=""
+if have docker && ! asleep docker; then
+	if ! own; then
+		docker_foreign=1
+	elif limited "$(upto 15)" docker info >/dev/null 2>&1; then
+		docker_up=1
+		docker_running=$(limited "$(upto 15)" docker ps -q --no-trunc 2>/dev/null)
+		docker_lr=$(limited "$(upto 15)" docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null)
+	fi
 fi
 podman_up=""
 if have podman && limited "$(upto 15)" podman info >/dev/null 2>&1; then
@@ -197,38 +294,72 @@ keep() {
 	# key, Podman's types always have it, as the probe reads it.
 	removed='{{index .HostConfig "AutoRemove"}}'
 	[ "$engine" = podman ] && removed='{{.HostConfig.AutoRemove}}'
-	limited "$(upto 30)" "$engine" inspect --format "{{.Id}} {{.Name}} {{.HostConfig.RestartPolicy.Name}} $removed" "$@" 2>/dev/null |
-		while read -r id name policy removed; do
-			# One its engine removes as it stops (run with --rm) is not
-			# there to start again.
-			[ "$removed" = true ] && continue
-			case "$RESUME:$policy" in
-			running:* | policy:always | policy:unless-stopped) printf '%s %s %s\n' "$engine" "$id" "${name#/}" ;;
-			esac
-		done >>"$state/resume.new"
+	# In a subshell of its own: a line that cannot be written ends it, and
+	# keep returns that write's code, whichever shell runs the end of a
+	# pipeline. The shell's own word for a write that failed is not kept:
+	# the stop says it as a step.
+	# The fields are split on |, which no id, container name, policy name
+	# or true and false holds: split on blanks, an empty policy name, as
+	# Podman may give, let the next field move into its place.
+	(
+		limited "$(upto 30)" "$engine" inspect --format "{{.Id}}|{{.Name}}|{{.HostConfig.RestartPolicy.Name}}|$removed" "$@" 2>/dev/null |
+			while IFS='|' read -r id name policy removed; do
+				# One its engine removes as it stops (run with --rm) is not
+				# there to start again.
+				[ "$removed" = true ] && continue
+				case "$RESUME:$policy" in
+				running:* | policy:always | policy:unless-stopped) printf '%s %s %s\n' "$engine" "$id" "${name#/}" || exit ;;
+				esac
+			done
+	) 2>/dev/null >>"$state/resume.new"
 }
-[ -n "$state" ] && : >"$state/resume.new"
+# The list is made anew beside the one it replaces, and takes its place
+# only once every line of it was written: one that cannot be written (a
+# full disk, a file system gone read-only) leaves the list there as it
+# was. wrote is the code of the write that failed, 0 while none has. The
+# file is made by printf, not :, as a shell ends the whole script where :
+# cannot make it.
+wrote=0
+if [ -n "$state" ]; then
+	printf '' 2>/dev/null >"$state/resume.new" || wrote=$?
+fi
 set -f
 # shellcheck disable=SC2086
-[ -n "$docker_up" ] && keep docker $docker_running
+[ -n "$docker_up" ] && [ "$wrote" = 0 ] && { keep docker $docker_running || wrote=$?; }
 # shellcheck disable=SC2086
-[ -n "$podman_up" ] && keep podman $podman_running
+[ -n "$podman_up" ] && [ "$wrote" = 0 ] && { keep podman $podman_running || wrote=$?; }
 set +f
 # The containers of an engine that did not answer stay to bring back: the
 # last start kept them until it answers, and this stop knows nothing new
-# of them. A line of anything but the two engines goes: each first word is
-# run as a command at the next start.
-if [ -n "$state" ] && [ "$RESUME" != off ] && [ -r "$state/resume" ]; then
-	while read -r r_engine r_id r_name; do
-		case "$r_engine" in
-		docker) [ -z "$docker_up" ] || continue ;;
-		podman) [ -z "$podman_up" ] || continue ;;
-		*) continue ;;
-		esac
-		[ -n "$r_id" ] && printf '%s %s %s\n' "$r_engine" "$r_id" "$r_name"
-	done <"$state/resume" >>"$state/resume.new"
+# of them. Those of a docker whose daemon is another's go, as none of them
+# is this distribution's. A line of anything but the two engines goes:
+# each first word is run as a command at the next start.
+if [ -n "$state" ] && [ "$wrote" = 0 ] && [ "$RESUME" != off ] && [ -f "$state/resume" ] && [ -r "$state/resume" ]; then
+	# In a subshell, as keep's lines: a line that cannot be written ends it
+	# with that write's code.
+	(
+		while read -r r_engine r_id r_name; do
+			case "$r_engine" in
+			docker) [ -z "$docker_up$docker_foreign" ] || continue ;;
+			podman) [ -z "$podman_up" ] || continue ;;
+			*) continue ;;
+			esac
+			# An id is hex: a line with anything else is not one of this
+			# script's, and does not live on.
+			case "$r_id" in '' | *[!0-9a-f]*) continue ;; esac
+			printf '%s %s %s\n' "$r_engine" "$r_id" "$r_name" || exit
+		done <"$state/resume"
+	) 2>/dev/null >>"$state/resume.new" || wrote=$?
 fi
-[ -n "$state" ] && mv -f "$state/resume.new" "$state/resume"
+if [ -n "$state" ]; then
+	# Written whole, it takes the old one's place; otherwise the old one
+	# stays, and the stop failed.
+	if [ "$wrote" = 0 ]; then
+		mv -f "$state/resume.new" "$state/resume" || unwritten $?
+	else
+		unwritten "$wrote"
+	fi
+fi
 
 # 1. The hooks, each with what time is left, found as the plan found them.
 ran=""
@@ -239,6 +370,7 @@ for h in "$hookdir"/*; do
 	n=$(plain "${h##*/}")
 	printf 'hook=%s\tstart\n' "$n"
 	s=$(now)
+	# within hands it no lock: a program the hook leaves running holds none.
 	within "$h" >/dev/null 2>&1
 	rc=$?
 	printf 'hook=%s\tdone\t%s\t%s\n' "$n" "$rc" $(($(now) - s))
@@ -266,13 +398,20 @@ fi
 # list stays as it is when the engine does not say which it has.
 gone() {
 	g_all=$(limited "$(upto 10)" "$1" ps -aq --no-trunc 2>/dev/null) || return 0
-	while read -r r_engine r_id r_name; do
-		if [ "$r_engine" = "$1" ]; then
-			case "$nl$g_all$nl" in *"$nl$r_id$nl"*) ;; *) continue ;; esac
-		fi
-		printf '%s %s %s\n' "$r_engine" "$r_id" "$r_name"
-	done <"$state/resume" >"$state/resume.new"
-	mv -f "$state/resume.new" "$state/resume"
+	# Made beside the list as the list was: a line that cannot be written
+	# ends the subshell with that write's code, and the list stays as it is.
+	(
+		while read -r r_engine r_id r_name; do
+			if [ "$r_engine" = "$1" ]; then
+				case "$nl$g_all$nl" in *"$nl$r_id$nl"*) ;; *) continue ;; esac
+			fi
+			printf '%s %s %s\n' "$r_engine" "$r_id" "$r_name" || exit
+		done <"$state/resume"
+	) 2>/dev/null >"$state/resume.new" || {
+		unwritten $?
+		return
+	}
+	mv -f "$state/resume.new" "$state/resume" || unwritten $?
 }
 if [ -n "$ran$units" ] && [ -n "$state" ] && [ -s "$state/resume" ]; then
 	[ -n "$docker_up" ] && gone docker
@@ -313,9 +452,14 @@ if [ -n "$docker_up" ]; then
 		mkdir -p "$R/run/systemd/system/$unit.d"
 		printf '[Service]\nTimeoutStopSec=%s\n' "$give" >"$R/run/systemd/system/$unit.d/zz-wsl-spawner.conf"
 		limited "$(upto 10)" systemctl daemon-reload >/dev/null 2>&1
-		# The socket first, so nothing starts the daemon again as it stops.
+		# The socket first, so nothing starts the daemon again as it stops:
+		# only where it is there, as systemctl fails a stop that names a unit
+		# it does not have (5), and the step with it. A docker.service
+		# written by hand, or by an older package, may have none.
 		sockets=""
-		[ "$unit" = docker.service ] && sockets=docker.socket
+		[ "$unit" = docker.service ] &&
+			[ "$(limited "$(upto 5)" systemctl show -p LoadState --value docker.socket 2>/dev/null)" = loaded ] &&
+			sockets=docker.socket
 		# shellcheck disable=SC2086
 		within systemctl stop $sockets "$unit" >/dev/null 2>&1 || rc=$?
 	else
@@ -364,8 +508,17 @@ done_step sync 0 "$s"
 # wsl-spawner's from one that cut the services short.
 if [ -n "$state" ]; then
 	took=$(($(now) - t0))
-	printf 'run=%s\nat=%s\ntook=%s\nresult=%s\nby=%s\n' "$run" $((NOW + took)) "$took" "$result" "$BY" >"$state/last-stop.new"
-	mv -f "$state/last-stop.new" "$state/last-stop"
+	# Made beside the record it replaces, and put in its place once written
+	# whole: one that cannot be written leaves the last record as it was,
+	# and the stop failed.
+	if printf 'run=%s\nat=%s\ntook=%s\nresult=%s\nby=%s\n' "$run" $((NOW + took)) "$took" "$result" "$BY" 2>/dev/null >"$state/last-stop.new"; then
+		mv -f "$state/last-stop.new" "$state/last-stop" || unwritten $?
+	else
+		unwritten $?
+	fi
 	have sync && sync
 fi
+# The lock folder is let go of: with no pid in it, the next stop takes it.
+# flock's lock goes as the script ends.
+[ -n "$held" ] && printf '' 2>/dev/null >"$held/pid"
 printf 'end=%s\n' "$result"

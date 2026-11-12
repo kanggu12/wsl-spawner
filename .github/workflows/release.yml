@@ -52,21 +52,51 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y zip
       - name: the zips, checksums and Scoop manifest
         run: scripts/dist.sh "${GITHUB_REF_NAME#v}"
-      # Anyone can check a zip came from this workflow, on this tag:
-      # gh attestation verify <zip> -R kanggu12/wsl-spawner
+      # Anyone can check that a file of the release came from this workflow,
+      # on this tag: gh attestation verify <file> -R kanggu12/wsl-spawner. Every
+      # file is attested, the install script, the checksums and the Scoop
+      # manifest too: the first is what `irm | iex` runs, the others are what
+      # it and Scoop trust.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.zip
+          subject-path: |
+            dist/*.zip
+            dist/checksums.txt
+            dist/install.ps1
+            dist/wsl-spawner.json
       - name: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           assets="dist/*.zip dist/checksums.txt dist/install.ps1 dist/wsl-spawner.json"
-          # A run started again after the release went out puts the same
-          # files back rather than failing on the release that is there.
+          # A run started again after the release went out finishes it: what
+          # is missing goes up, and a file that is there stays exactly as it
+          # is. People have checked it against its checksum, and a rebuild
+          # is not the same file; nothing published is ever replaced.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            have=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+            # on says whether a file of that name is on the release.
+            on() { printf '%s\n' "$have" | grep -qxF "$1"; }
+            # checksums.txt and the Scoop manifest name each zip's hash, and
+            # people check the zips against them: once either is out, a zip
+            # missing beside it would be this run's, built again, maybe with
+            # a newer Go, and not the one they name. Nothing goes up then.
+            if on checksums.txt || on wsl-spawner.json; then
+              for f in dist/*.zip; do
+                if ! on "${f##*/}"; then
+                  echo "${f##*/} is not on the release, and checksums.txt or wsl-spawner.json is: this run's build of it may not be the one they name, so nothing goes up" >&2
+                  exit 1
+                fi
+              done
+            fi
             # shellcheck disable=SC2086
-            gh release upload "$GITHUB_REF_NAME" $assets --clobber
+            for f in $assets; do
+              if on "${f##*/}"; then
+                echo "${f##*/} is on the release already: left as it is"
+              else
+                gh release upload "$GITHUB_REF_NAME" "$f"
+              fi
+            done
             exit 0
           fi
           # A tag with a hyphen (v0.2.0-rc.1) is a pre-release: GitHub's
@@ -80,8 +110,10 @@ jobs:
             --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" "$@"
 
   # The demo image: the screen on a made-up PC, without installing anything.
+  # Pushed once the release is out: a release that fails its own checks
+  # pushes no image, :latest among its tags.
   demo-image:
-    needs: ci
+    needs: release
     # A fixed Ubuntu: ubuntu-latest moves to a new release on its own, with
     # other packages, as it is moving to Ubuntu 26.
     runs-on: ubuntu-24.04

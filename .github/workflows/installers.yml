@@ -127,13 +127,17 @@ jobs:
           $v = wsl-spawner version
           $v
           if ($v -notmatch ('^wsl-spawner ' + [regex]::Escape($env:VERSION) + ' ')) { 'not the release asked for'; exit 1 }
-          # The program leaves what Scoop installed to Scoop.
-          $said = wsl-spawner uninstall --yes 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 1 -or $said -notmatch 'installed with Scoop') { "wsl-spawner uninstall did not leave the Scoop install to Scoop: $said"; exit 1 }
-          if (-not (Get-Command wsl-spawner -ErrorAction SilentlyContinue)) { 'the program went'; exit 1 }
-          # With --purge it takes out what it put on the PC and the settings,
-          # and still leaves the program to Scoop.
+          # The program leaves what Scoop installed to Scoop: it takes out
+          # what it put on the PC, keeps the settings, and says how the
+          # program is removed.
           wsl-spawner setup --mode cli
+          $settings = Join-Path $env:APPDATA 'wsl-spawner\config.toml'
+          if (-not (Test-Path $settings)) { 'setup wrote no settings'; exit 1 }
+          $said = wsl-spawner uninstall --yes 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $said -notmatch 'scoop uninstall wsl-spawner removes the program') { "wsl-spawner uninstall did not leave the Scoop install to Scoop: $said"; exit 1 }
+          if (-not (Get-Command wsl-spawner -ErrorAction SilentlyContinue)) { 'the program went'; exit 1 }
+          if (-not (Test-Path $settings)) { 'the settings went without --purge'; exit 1 }
+          # With --purge the settings go too, and the program still stays.
           wsl-spawner uninstall --purge --yes
           if ($LASTEXITCODE -ne 0) { 'wsl-spawner uninstall --purge failed'; exit 1 }
           if (Test-Path (Join-Path $env:APPDATA 'wsl-spawner')) { 'the settings are still there'; exit 1 }

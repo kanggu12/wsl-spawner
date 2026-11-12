@@ -30,9 +30,10 @@ func stopCmd(p *apps) *cobra.Command {
 		Use:   "stop [distribution...]",
 		Short: "Stop distributions, each service and container with the time it asks for",
 		Long: "stop brings each distribution named down the slow way: the hooks in\n" +
-			"/etc/wsl-spawner/pre-stop.d, the units in /etc/wsl-spawner/stop-units, then Docker\n" +
-			"and Podman, every container with its own stop timeout, all within stop_limit\n" +
-			"seconds. WSL then ends what is left. Distributions stop at the same time.\n\n" +
+			"/etc/wsl-spawner/pre-stop.d, the units in /etc/wsl-spawner/stop-units, then\n" +
+			"Docker and Podman, every container with its own stop timeout, all within\n" +
+			"stop_limit seconds. WSL then ends what is left. Distributions stop at the same\n" +
+			"time.\n\n" +
 			"It says what it will do and asks first; --yes does it without the question.\n" +
 			"--shutdown stops WSL itself after, every distribution with it. Exit code 3: a\n" +
 			"step ran out of time or failed.",
@@ -187,8 +188,12 @@ func runStop(cmd *cobra.Command, a *app.App, ask stopAsk) error {
 		}
 		entry.Err = note
 	}
-	if herr := history.Open(a.Dir).Add(entry); herr != nil && !ask.background {
-		fmt.Fprintln(errOut, l.warn("! ")+"the history was not written: "+herr.Error())
+	// Every distribution was another stop's, which records it, and this one
+	// did nothing else: there is nothing of its own to keep.
+	if len(entry.Distros) > 0 || o.Shutdown || entry.Err != "" {
+		if herr := history.Open(a.Dir).Add(entry); herr != nil && !ask.background {
+			fmt.Fprintln(errOut, l.warn("! ")+"the history was not written: "+herr.Error())
+		}
 	}
 	if ask.json {
 		if err := writeJSON(out, ask.events, stopJSON(results, ask.shutdown, runErr)); err != nil {
@@ -202,10 +207,10 @@ func runStop(cmd *cobra.Command, a *app.App, ask stopAsk) error {
 	if runErr != nil {
 		return runErr
 	}
-	for _, r := range results {
-		if !r.Clean() {
-			return attention{errors.New(counted(notClean(results), "distribution") + " did not get every step in its time: wsl-spawner history shows the steps")}
-		}
+	// One another stop is stopping is that stop's to end, and no step of
+	// this one's that went wrong.
+	if notClean(results) > 0 {
+		return attention{errors.New(counted(notClean(results), "distribution") + " did not get every step in its time: wsl-spawner history shows the steps")}
 	}
 	return nil
 }
@@ -330,7 +335,8 @@ func planWords(p *inside.Probe) string {
 	if n := len(p.Hooks); n > 0 {
 		parts = append(parts, counted(n, "hook"))
 	}
-	if n := len(p.StopUnits); n > 0 {
+	// The units a stop takes: those that run now.
+	if n := len(p.TakenStopUnits()); n > 0 {
 		parts = append(parts, counted(n, "unit"))
 	}
 	for _, e := range []string{"docker", "podman"} {
@@ -393,6 +399,12 @@ func writeEvent(out io.Writer, l look, width int, counts map[string]int, e stop.
 		if !e.Done {
 			fmt.Fprintln(out, name(e.Distro)+"WSL ends the rest"+l.muted(" …"))
 		}
+	case "finished":
+		// One another stop is stopping is said as soon as it is known: a
+		// shutdown waits for that stop before WSL stops.
+		if e.Result != nil && e.Result.Busy() {
+			fmt.Fprintln(out, name(e.Distro)+l.muted("another stop of "+e.Distro+" is running, and stops it"))
+		}
 	case "shutdown":
 		if !e.Done {
 			fmt.Fprintln(out, "WSL stops"+l.muted(" …"))
@@ -412,6 +424,9 @@ func stepWords(ln inside.StopLine) string {
 		return "units"
 	case inside.StepDocker, inside.StepPodman:
 		return ln.Step + ": " + counted(ln.Count, "container")
+	case inside.StepRecord:
+		// Said only when a file of the stop's own could not be written.
+		return "notes in /var/lib/wsl-spawner"
 	}
 	return ln.Step
 }
@@ -420,6 +435,8 @@ func stepWords(ln inside.StopLine) string {
 func writeResult(out io.Writer, l look, r stop.Result) {
 	secs := fmt.Sprintf("%d s", int(r.Took.Round(time.Second)/time.Second))
 	switch {
+	case r.Busy():
+		// Said as it came, as another stop's to end.
 	case r.Clean():
 		fmt.Fprintln(out, l.done(r.Distro+" stopped, every step in its time, "+secs))
 	case r.Err != nil:
@@ -431,11 +448,12 @@ func writeResult(out io.Writer, l look, r stop.Result) {
 	}
 }
 
-// notClean counts the stops that were not clean.
+// notClean counts the stops that were not clean. One another stop is
+// stopping is that stop's, and not counted.
 func notClean(rs []stop.Result) int {
 	n := 0
 	for _, r := range rs {
-		if !r.Clean() {
+		if !r.Clean() && !r.Busy() {
 			n++
 		}
 	}

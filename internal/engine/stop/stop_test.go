@@ -143,6 +143,54 @@ func TestShutdownComesAfterEveryDistribution(t *testing.T) {
 	}
 }
 
+func TestADistributionAnotherStopIsStoppingIsLeftToThatStop(t *testing.T) {
+	// Its stop script says another stop of it runs: this one says so, and
+	// neither ends it under that stop's steps nor keeps it in the history
+	// as a stop of its own. The others stop as ever.
+	f := printing(map[string][]string{"Dev": {"end=busy"}, "Work": {"end=clean"}})
+	results, err := Run(context.Background(), f, []string{"Dev", "Work"}, opts, fixed(), func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, work := results[0], results[1]
+	if dev.End != "busy" || dev.Err == nil || dev.Err.Error() != "another stop of Dev is running" || dev.Clean() {
+		t.Fatalf("%+v", dev)
+	}
+	if slices.Contains(f.CallList(), "terminate:Dev") || !slices.Contains(f.CallList(), "terminate:Work") || !work.Clean() {
+		t.Fatalf("calls %q, %+v", f.CallList(), work)
+	}
+	if e := Entry(results, opts, time.Unix(5, 0), time.Second, nil, "0.1.0"); len(e.Distros) != 1 || e.Distros[0].Name != "Work" {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestAShutdownWaitsForTheDistributionAnotherStopIsStopping(t *testing.T) {
+	// WSL's own stop would cut the other stop's steps short: it waits until
+	// that stop has ended the distribution.
+	defer func(p time.Duration) { busyPoll = p }(busyPoll)
+	busyPoll = 10 * time.Millisecond
+	f := printing(map[string][]string{"Dev": {"end=busy"}})
+	o := opts
+	o.Shutdown = true
+	// The other stop ends Dev a moment later.
+	other := make(chan struct{})
+	go func() {
+		defer close(other)
+		time.Sleep(300 * time.Millisecond)
+		_ = f.Terminate(context.Background(), "Dev")
+	}()
+	if _, err := Run(context.Background(), f, []string{"Dev"}, o, fixed(), func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	<-other
+	// Dev ended once, by the other stop, and WSL stopped after that.
+	calls := f.CallList()
+	ended, shut := slices.Index(calls, "terminate:Dev"), slices.Index(calls, "shutdown:")
+	if ended < 0 || shut < ended || slices.Index(calls[ended+1:], "terminate:Dev") >= 0 {
+		t.Fatalf("calls %q", calls)
+	}
+}
+
 func TestAWSLThatDoesNotEndTheDistributionIsSaid(t *testing.T) {
 	f := printing(map[string][]string{"Dev": {"end=clean"}})
 	f.Fail = map[string]error{"terminate:Dev": errors.New("Access is denied")}

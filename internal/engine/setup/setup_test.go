@@ -89,7 +89,10 @@ func TestInAndOutSayWhatIsMissing(t *testing.T) {
 		}
 		return "", errors.New("unexpected")
 	}
-	answers[inside.Signal("Dev")] = "ok=1\n"
+	answers[inside.Signal("Dev", "t0k3n")] = "ok=1\n"
+	// The token is made known here; in a distribution it is random.
+	newToken = func() (string, error) { return "t0k3n", nil }
+	t.Cleanup(func() { newToken = realToken })
 	if err := In(context.Background(), f, "Dev", true); err != nil {
 		t.Fatal(err)
 	}
@@ -100,5 +103,33 @@ func TestInAndOutSayWhatIsMissing(t *testing.T) {
 	answers = map[string]string{"rm -rf": "half\n"}
 	if err := Out(context.Background(), f, "Dev"); err == nil || !strings.Contains(err.Error(), "did not end: half") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestEachSetUpGivesTheKeepRunningServiceANewSecretName(t *testing.T) {
+	// The signal a keep-running service waits for ends with a secret, new at
+	// each set-up: not the distribution's name and a checksum, which another
+	// user's program could work out and wait for first.
+	f := &wsl.Fake{List: []wsl.Distro{{Name: "Dev", Version: 2, Running: true}}}
+	var signals []string
+	f.Script = func(_, _, script string) (string, error) {
+		i := strings.Index(script, "WslSpawnerKeepDev")
+		if i < 0 {
+			return "", errors.New("no signal in the script")
+		}
+		j := i
+		for j < len(script) && (script[j] >= 'a' && script[j] <= 'z' || script[j] >= 'A' && script[j] <= 'Z' || script[j] >= '0' && script[j] <= '9') {
+			j++
+		}
+		signals = append(signals, script[i:j])
+		return "ok=1\n", nil
+	}
+	for range 2 {
+		if err := In(context.Background(), f, "Dev", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(signals) != 2 || signals[0] == signals[1] || len(signals[0]) != len("WslSpawnerKeepDev")+32 {
+		t.Fatalf("%q", signals)
 	}
 }

@@ -149,6 +149,110 @@ func TestADistributionsFindings(t *testing.T) {
 	}
 }
 
+func TestADockerAsleepBehindItsSocketIsSaidForTheLook(t *testing.T) {
+	// Its daemon stopped by hand, its socket listening, as Docker's
+	// packages leave it: not asked, as asking starts it, and nothing of it
+	// runs to stop. That is no daemon that does not answer.
+	p, err := inside.Parse("probe=1\nsystemd=running\ndocker=asleep\nend=1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := base()
+	in.Distros[0].Probe = &p
+	got := keys(find(t, Run(in), "check.g.distro", "Dev"))
+	if !slices.Contains(got, "info:d.engineasleep") || slices.Contains(got, "warn:d.enginedown") {
+		t.Fatalf("%q", got)
+	}
+	// One that does not answer is said as before.
+	p, _ = inside.Parse("probe=1\nsystemd=running\ndocker=down\nend=1\n")
+	in.Distros[0].Probe = &p
+	if got := keys(find(t, Run(in), "check.g.distro", "Dev")); !slices.Contains(got, "warn:d.enginedown") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestADockerOfAnotherDaemonIsSaidForTheLook(t *testing.T) {
+	// A docker command here answers for a daemon this distribution does
+	// not run, Docker Desktop's or another engine's: it is left alone,
+	// which is nothing to do, and no daemon that does not answer.
+	p, err := inside.Parse("probe=1\nsystemd=running\ndocker=foreign\nend=1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := base()
+	in.Distros[0].Probe = &p
+	got := keys(find(t, Run(in), "check.g.distro", "Dev"))
+	if !slices.Contains(got, "info:d.engineforeign") || slices.Contains(got, "warn:d.enginedown") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestTheStopUnitsThatAStopPassesByAreSaid(t *testing.T) {
+	// A stop stops only the listed units that run: one systemd does not
+	// have (a typo) is said as worth a look, those that do not run now
+	// for the look, each with its state. One whose state was not read is
+	// not said either way.
+	in := base()
+	p := setUp()
+	p.StopUnits = []string{"minecraft.service", "minecarft.service", "postgresql.service", "redis.service", "slow.service"}
+	p.StopUnitStates = map[string]inside.StopUnitState{
+		"minecraft.service":  {Load: "loaded", Active: "active"},
+		"minecarft.service":  {Load: "not-found", Active: "inactive"},
+		"postgresql.service": {Load: "loaded", Active: "activating"},
+		"redis.service":      {Load: "loaded", Active: "inactive"},
+	}
+	in.Distros[0].Probe = p
+	g := find(t, Run(in), "check.g.distro", "Dev")
+	said := map[string]Item{}
+	for _, it := range g.Items {
+		said[it.Key] = it
+	}
+	if it, ok := said["check.d.unitsmissing"]; !ok || it.Mark != Warn || it.Args[0] != "minecarft.service" {
+		t.Errorf("missing: %+v\n%q", it, keys(g))
+	}
+	if it, ok := said["check.d.unitsidle"]; !ok || it.Mark != Info || it.Args[0] != "postgresql.service (activating), redis.service (inactive)" {
+		t.Errorf("idle: %+v\n%q", it, keys(g))
+	}
+}
+
+func TestASystemdThatDoesNotAnswerIsNotNoSystemd(t *testing.T) {
+	// systemd runs in it, and did not answer the probe in its time: said
+	// for what it is, not as a distribution where systemd does not run,
+	// which points to turning it on.
+	in := base()
+	in.Distros[0].Probe.Systemd = "noanswer"
+	got := keys(find(t, Run(in), "check.g.distro", "Dev"))
+	if !slices.Contains(got, "warn:d.systemdsilent") || slices.Contains(got, "warn:d.nosystemd") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestAStartScriptIsJudgedByItsVersionNumber(t *testing.T) {
+	// Older is a smaller number, or a line that names none; a larger one is
+	// from a newer wsl-spawner, which this one leaves as it is, said for
+	// the look.
+	for version, want := range map[string]string{
+		"1":                       "warn:d.oldsetup",
+		"x":                       "warn:d.oldsetup",
+		"99":                      "info:d.newsetup",
+		inside.StartScriptVersion: "",
+	} {
+		in := base()
+		in.Distros[0].Probe.StartScript = inside.StartScriptMark + version
+		got := keys(find(t, Run(in), "check.g.distro", "Dev"))
+		// Only the finding for this version, if any, about the script.
+		var said []string
+		for _, k := range got {
+			if strings.HasSuffix(k, "setup") {
+				said = append(said, k)
+			}
+		}
+		if want == "" && len(said) != 0 || want != "" && !slices.Equal(said, []string{want}) {
+			t.Errorf("version %s: %q", version, got)
+		}
+	}
+}
+
 func TestAClockIsJudgedAgainstWindowsClockAroundItsProbe(t *testing.T) {
 	// The probe was asked at now and answered a minute later: a clock that
 	// read anything in between agrees with Windows', and one outside is

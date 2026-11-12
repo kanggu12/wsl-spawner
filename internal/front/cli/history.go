@@ -20,8 +20,9 @@ func historyCmd(p *apps) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "history",
 		Short: "List the stops and starts wsl-spawner made, newest first",
-		Long: "history lists each stop and start wsl-spawner made, by hand, as Windows signed out\n" +
-			"or at sign-in, with how each distribution went. --clear removes them.",
+		Long: "history lists each stop and start wsl-spawner made, by hand, as Windows signed\n" +
+			"out or at sign-in, with how each distribution went, and for a stop out of time\n" +
+			"or with a step failed, which step. --clear removes them.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a, err := p.get()
@@ -96,6 +97,28 @@ func writeHistory(out io.Writer, l look, entries []history.Entry, all bool) {
 	}
 }
 
+// lateStep names the step a stop's result is about, after a colon: a hook
+// by its file, the others by their name, and a failed one's exit code; ""
+// when the history kept none.
+func lateStep(d history.Distro) string {
+	s, ok := d.Late()
+	if !ok {
+		return ""
+	}
+	name := s.Step
+	switch s.Step {
+	case "hook":
+		name = "hook " + s.Hook
+	case "record":
+		// A file of the stop's own that could not be written.
+		name = "notes in /var/lib/wsl-spawner"
+	}
+	if s.Code != 124 {
+		name += fmt.Sprintf(", exit %d", s.Code)
+	}
+	return ": " + name
+}
+
 // shutdownWord marks a stop that stopped WSL after.
 func shutdownWord(e history.Entry) string {
 	if e.Shutdown {
@@ -115,7 +138,8 @@ func byWords(by string) string {
 	return "by hand"
 }
 
-// distrosWords says how each distribution went, in its color.
+// distrosWords says how each distribution went, in its color, and for a
+// stop out of time or with a step failed, which step.
 func distrosWords(l look, e history.Entry) string {
 	var parts []string
 	for _, d := range e.Distros {
@@ -124,11 +148,16 @@ func distrosWords(l look, e history.Entry) string {
 		case "clean", "started", "running":
 			w = l.clean(w)
 		case "limit":
-			w = l.warn("out of time")
+			w = l.warn("out of time" + lateStep(d))
 		case "failed":
-			w = l.warn("a step failed")
+			w = l.warn("a step failed" + lateStep(d))
 		case "error":
-			w = l.bad("error")
+			// As the screen says it: a stop that did not stop as it
+			// should, a start that did not start.
+			w = l.bad("did not stop as it should")
+			if e.What == "start" {
+				w = l.bad("did not start")
+			}
 		}
 		parts = append(parts, d.Name+" "+w)
 	}

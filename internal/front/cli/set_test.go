@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,8 +26,10 @@ import (
 type box struct {
 	f *wsl.Fake
 	a *app.App
-	// setUp and kept say, by name, what is in each distribution now.
-	setUp, kept map[string]bool
+	// setUp and kept say, by name, what is in each distribution now; old
+	// that the start script in it is from an older version, newer that it
+	// is from a newer one.
+	setUp, kept, old, newer map[string]bool
 	// scripts notes each script run, as "NAME:setup-keep", "NAME:setup",
 	// "NAME:remove" or "NAME:probe".
 	scripts []string
@@ -40,7 +43,7 @@ type box struct {
 // not set up, and Docker Desktop's own.
 func newBox(t *testing.T) *box {
 	t.Helper()
-	b := &box{setUp: map[string]bool{}, kept: map[string]bool{}, resumed: map[string]string{}}
+	b := &box{setUp: map[string]bool{}, kept: map[string]bool{}, old: map[string]bool{}, newer: map[string]bool{}, resumed: map[string]string{}}
 	b.f = &wsl.Fake{List: []wsl.Distro{
 		{Name: "Ubuntu-24.04", Version: 2, Running: true},
 		{Name: "Debian", Version: 2},
@@ -52,7 +55,15 @@ func newBox(t *testing.T) *box {
 			b.scripts = append(b.scripts, distro+":probe")
 			out := "probe=1\n"
 			if b.setUp[distro] {
-				out += "start_script=" + inside.StartScriptMark + "1\nunit=" + inside.StartUnit + "\tinactive\tenabled\n" + b.resumed[distro]
+				version := inside.StartScriptVersion
+				if b.old[distro] {
+					version = "1"
+				}
+				// One a later wsl-spawner put, after which this one came back.
+				if b.newer[distro] {
+					version = "99"
+				}
+				out += "start_script=" + inside.StartScriptMark + version + "\nunit=" + inside.StartUnit + "\tinactive\tenabled\n" + b.resumed[distro]
 			}
 			if b.kept[distro] {
 				out += "unit=" + inside.KeepAliveUnit + "\tactive\tenabled\n"
@@ -64,7 +75,9 @@ func newBox(t *testing.T) *box {
 			return "ok=1\n", nil
 		case strings.Contains(script, "systemctl enable --quiet "+inside.StartUnit):
 			keep := strings.Contains(script, "enable --quiet --now "+inside.KeepAliveUnit)
-			if keep && !strings.Contains(script, inside.Signal(distro)) {
+			// The signal is this distribution's letters and digits and a secret of
+			// 32 hex digits, new at each set-up.
+			if keep && !regexp.MustCompile(inside.Signal(distro, "")+`[0-9a-f]{32}\b`).MatchString(script) {
 				return "", errors.New("the keep-running service waits for another name")
 			}
 			w := distro + ":setup"
@@ -72,7 +85,7 @@ func newBox(t *testing.T) *box {
 				w += "-keep"
 			}
 			b.scripts = append(b.scripts, w)
-			b.setUp[distro], b.kept[distro] = true, keep
+			b.setUp[distro], b.kept[distro], b.old[distro] = true, keep, false
 			return "ok=1\n", nil
 		}
 		return "", errors.New("unexpected script")
@@ -406,5 +419,40 @@ func TestSetAndStartJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &st); err != nil || code != exitOK || len(st.Results) != 1 || st.Results[0].Result != "started" ||
 		len(st.Results[0].Back) != 1 || st.Results[0].Back[0] != (api.CameBack{Engine: "docker", Name: "db", What: "started"}) {
 		t.Fatalf("%v %d %+v\n%s", err, code, st, out)
+	}
+}
+
+func TestManagedPutsTheNewerStartScriptWhereTheOneInItIsOlder(t *testing.T) {
+	// The start script runs as root at each start of the distribution. One
+	// from an older version is what check says to put again with --managed,
+	// which said "nothing to change" while it was set up.
+	b := newBox(t)
+	b.setUp["Ubuntu-24.04"], b.old["Ubuntu-24.04"] = true, true
+	out, errOut, code := cli(t, b.a, false, "set", "Ubuntu-24.04", "--managed", "--yes")
+	if code != exitOK || !strings.Contains(out, "put wsl-spawner's newer start script in it") || strings.Contains(out, "nothing to change") {
+		t.Fatalf("exit %d: %s%s", code, out, errOut)
+	}
+	if !slices.Contains(b.changes(), "Ubuntu-24.04:setup") || b.old["Ubuntu-24.04"] {
+		t.Fatalf("scripts %q, old %v", b.changes(), b.old)
+	}
+	// Put now: the same again changes nothing.
+	before := len(b.changes())
+	if out, _, code := cli(t, b.a, false, "set", "Ubuntu-24.04", "--managed", "--yes"); code != exitOK || !strings.Contains(out, "nothing to change") || len(b.changes()) != before {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	// A script from a newer version, which a later wsl-spawner put before
+	// this one came back, is not older: it stays as it is.
+	b3 := newBox(t)
+	b3.setUp["Ubuntu-24.04"], b3.newer["Ubuntu-24.04"] = true, true
+	if out, errOut, code := cli(t, b3.a, false, "set", "Ubuntu-24.04", "--managed", "--yes"); code != exitOK || !strings.Contains(out, "nothing to change") || len(b3.changes()) != 0 {
+		t.Fatalf("exit %d, scripts %q: %s%s", code, b3.changes(), out, errOut)
+	}
+	// A change that does not ask for --managed leaves an older script to
+	// the change: --skip=false on a distribution that is not left to WSL
+	// says nothing to change, as it did.
+	b2 := newBox(t)
+	b2.setUp["Ubuntu-24.04"], b2.old["Ubuntu-24.04"] = true, true
+	if out, _, code := cli(t, b2.a, false, "set", "Ubuntu-24.04", "--skip=false", "--yes"); code != exitOK || !strings.Contains(out, "nothing to change") {
+		t.Fatalf("exit %d: %s", code, out)
 	}
 }

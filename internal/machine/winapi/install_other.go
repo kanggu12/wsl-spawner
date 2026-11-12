@@ -14,6 +14,9 @@ func SetUserPath(string, bool) error { return ErrNotWindows }
 // InUse cannot say off Windows: no file is held.
 func InUse(string) bool { return false }
 
+// CanDelete has no Windows to ask off Windows: nothing is refused.
+func CanDelete(string) error { return nil }
+
 // OthersRunning cannot say off Windows: none are counted.
 func OthersRunning(string) (int, error) { return 0, nil }
 

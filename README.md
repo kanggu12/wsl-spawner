@@ -32,8 +32,7 @@
 
 When WSL stops a distribution, by `wsl --terminate`, an idle timeout, an update or Windows signing out, its services
 get about ten seconds: Docker's containers and a database's shutdown are cut off where they are. wsl-spawner stops each
-distribution the slow way first, every service and container with the time it asks for, does it by itself as Windows
-signs out, shuts down or restarts, and starts again what was running.
+distribution the slow way first, by itself as Windows signs out, and starts again what was running.
 
 ## Install
 
@@ -53,19 +52,19 @@ first, a [sandbox](docs/setup.md#try-it-in-a-sandbox) opens the screen on a made
 ## What it does
 
 - **Gives each service its time.** Your hooks and units first, then every container with its own stop timeout.
-- **Runs as Windows signs out.** Its hook runs at every sign-out, shutdown and restart, an update's too.
+- **Runs as Windows signs out.** Its hook runs at every sign-out, shutdown and restart, an update's restart too.
 - **Brings back what ran.** The containers that were running start again, their restart policies kept.
 - **Keeps a distribution up.** WSL stops one with nothing open in it; wsl-spawner keeps it running, or starts it at
   sign-in.
-- **Says how the last run ended.** A start cut short by an update or a crash is told apart, with what cut it.
-- **Changes nothing unasked.** The screen and the CLI read until you confirm, and `check` says what to fix.
+- **Says how the last run ended.** After an update or a crash, the next start says the run was cut, and by what.
+- **Scriptable.** Everything on the screen is a command too, with `--json`, and `check` says what to fix.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/steps-dark.svg">
-  <img alt="A stop in six steps: note the containers to bring back, your hooks, your units, Docker's daemon stopping every container, Podman's containers, then sync and record how it went. Under them, stop_limit, 300 seconds, as a row of cells: the demo's stop lit 23 seconds of it; then WSL ends what is left." src="docs/assets/steps-light.svg">
+  <img alt="A stop in seven steps: note the containers to bring back, your hooks, your units, Docker's daemon stopping every container, Podman's containers, sync, then record how it went. Under them, stop_limit, 300 seconds, as a row of cells: the demo's stop lit 23 seconds of it; then WSL ends what is left." src="docs/assets/steps-light.svg">
 </picture>
 
-<p align="center"><i>A stop, step by step: all the steps share <code>stop_limit</code>, then WSL ends what is left.</i></p>
+<p align="center"><i>A stop, step by step, the same from <code>wsl-spawner stop</code>, the screen and the sign-out hook.</i></p>
 
 ## How it works
 
@@ -76,7 +75,7 @@ first, a [sandbox](docs/setup.md#try-it-in-a-sandbox) opens the screen on a made
 
 One Go program, built for Windows and for Linux: on Windows it does the work, and in WSL the same program is a launcher
 that hands each command to `wsl-spawner.exe` and draws the screen from its JSON. It reaches a distribution only through
-`wsl.exe`, as root, never starts one just to read it, and keeps no program running on Windows.
+`wsl.exe`, as root, never starts one just to read it, and leaves no program of its own running on Windows.
 [How it works](docs/how-it-works.md) follows a stop and a start; [Internals](docs/internals.md) has the layers and the
 tests.
 
@@ -86,7 +85,7 @@ tests.
 |:---|:---|:---|
 | [Setup](docs/setup.md): install, upgrade, remove | [How it works](docs/how-it-works.md): a stop, the hook, a start | [Internals](docs/internals.md): the layers and the tests |
 | [Commands](docs/commands.md): flags, keys, JSON | [Troubleshooting](docs/troubleshooting.md): what each finding means | [Contributing](.github/CONTRIBUTING.md): build, test, change |
-| [Settings](docs/settings.md): `config.toml`, hooks | [Questions](docs/questions.md): rights, Docker Desktop, removal | [Changelog](CHANGELOG.md) · [Security](.github/SECURITY.md) |
+| [Settings](docs/settings.md): `config.toml`, hooks | [Questions](docs/questions.md): administrator, Docker Desktop, removal | [Changelog](CHANGELOG.md) · [Security](.github/SECURITY.md) |
 
 ## License
 

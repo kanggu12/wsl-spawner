@@ -29,7 +29,7 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/layers-dark.svg">
-  <img alt="The layers of the code under internal, highest first; an import goes down, never up. cmd: the program, in WSL the launcher. front: what people use (cli, tui, api, ui, i18n). app: puts the rest together (app, demo). engine: a stop, a start and a check (distros, inside, stop, setup, check, history). settings: config. machine: wsl, winapi, gpo, eventlog. core: plain, version." src="assets/layers-light.svg">
+  <img alt="The layers under internal, highest first; imports go down, never up. cmd: the program, in WSL the launcher. front: what people use (cli, tui, api, ui, i18n). app: puts the rest together (app, demo). engine: a stop, a start and a check (distros, inside, stop, setup, check, history). settings: config. machine: wsl, winapi, gpo, eventlog. core: plain, version." src="assets/layers-light.svg">
 </picture>
 
 | Layer | Packages | |
@@ -46,7 +46,7 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/touches-dark.svg">
-  <img alt="What wsl-spawner reads: WSL's own answers, a running distribution's systemd, journal, units and containers, and on Windows the sign-out scripts, the wait and the event logs. It runs as you and changes nothing before you confirm: each distribution you set it up in, the sign-in program and its settings, and as an administrator the sign-out hook and the wait." src="assets/touches-light.svg">
+  <img alt="What wsl-spawner reads: WSL's own answers, a running distribution's systemd, journal, units and containers, and on Windows the sign-out scripts, the wait and the event logs. It runs as you and, once you confirm, changes each distribution you set it up in, the sign-in program and its settings, and as an administrator the sign-out hook and the wait." src="assets/touches-light.svg">
 </picture>
 
 It reads without asking: WSL's own answers, and in a running distribution, as root, systemd, its journal, the units,
@@ -81,7 +81,7 @@ program under your `Run` key, and as an administrator the sign-out hook and the 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/release-dark.svg">
-  <img alt="From a change to a release. make check: gofmt, vet, staticcheck, shellcheck and go test -race. make test-windows: every package again as a Windows program. CI: fuzzing, Windows Server 2022 and 2025, Windows on ARM, real stops on WSL 2. A vX.Y.Z tag: the zips with provenance, Scoop and the demo image, then the release installed." src="assets/release-light.svg">
+  <img alt="From a change to a release. make check: gofmt, vet, staticcheck, shellcheck and go test -race. make test-windows: every package again as a Windows program. CI: Windows Server 2022 and 2025, Windows on Arm, fuzzing, and real stops on WSL 2. A vX.Y.Z tag: builds the zips, Scoop and the demo image, then installs them." src="assets/release-light.svg">
 </picture>
 
 - **The scripts** run under the test machine's `sh` against made-up roots: a temporary folder stands for `/`, with

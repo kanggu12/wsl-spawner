@@ -25,7 +25,7 @@ docker run --rm -it ghcr.io/kanggu12/wsl-spawner-demo
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/ways-dark.svg">
-  <img alt="Ways to install: PowerShell's one line, Scoop, by hand, or an administrator's install for a standard user. Each gives one folder on PATH: wsl-spawner.exe, wsl-spawnerw.exe, the same with no window, and wsl-spawner, the launcher for WSL. It runs in PowerShell and Windows Terminal, inside WSL, and at sign-in and sign-out." src="assets/ways-light.svg">
+  <img alt="Ways to install: PowerShell's one line, Scoop, by hand, or an administrator's install for a standard user. Each gives one folder on PATH: wsl-spawner.exe, the Windows program, runs in PowerShell and Windows Terminal; wsl-spawner, the launcher, inside WSL; wsl-spawnerw.exe, the same with no window, at sign-in and sign-out." src="assets/ways-light.svg">
 </picture>
 
 In PowerShell, as you, not as an administrator:
@@ -44,7 +44,7 @@ it, or the first start where the install did not; `wsl-spawner setup` opens it a
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/setup-dark.png">
-  <img alt="The setup wizard at step 5 of 7, Distributions. A rail on the left lists the steps, the first four checked. Each distribution has a level, chosen with space: stop only, set up, kept running, or started at sign-in. Ubuntu-24.04 is started at sign-in; Debian is stopped: what is set up in it shows once it runs; Work, selected, is kept running." src="assets/setup-light.png">
+  <img alt="The setup wizard at step 5 of 7, Distributions. A rail on the left lists the steps, the first four checked. Each distribution has a level: stop only, set up, kept running, or started at sign-in. Ubuntu-24.04 is started at sign-in; Debian is stopped, so what is set up in it shows once it runs; Work, selected, is kept running." src="assets/setup-light.png">
 </picture>
 
 | Variable | Does |

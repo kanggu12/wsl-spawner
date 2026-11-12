@@ -22,7 +22,7 @@ at sign-in, and the sign-out hook when you install it. `wsl-spawner check` says 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/touches-dark.svg">
-  <img alt="What wsl-spawner reads: WSL's own answers, a running distribution's systemd, journal, units and containers, and on Windows the sign-out scripts, the wait and the event logs. It runs as you and changes nothing before you confirm: each distribution you set it up in, the sign-in program and its settings, and as an administrator the sign-out hook and the wait." src="assets/touches-light.svg">
+  <img alt="What wsl-spawner reads: WSL's own answers, a running distribution's systemd, journal, units and containers, and on Windows the sign-out scripts, the wait and the event logs. It runs as you and, once you confirm, changes each distribution you set it up in, the sign-in program and its settings, and as an administrator the sign-out hook and the wait." src="assets/touches-light.svg">
 </picture>
 
 ## Does it work with Docker Desktop?

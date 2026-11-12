@@ -102,7 +102,7 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screen-dark.png">
-  <img alt="The screen on a wide terminal, in two panes. On the left, four distributions: Ubuntu-24.04, selected, runs, set up and started at sign-in, three of its four containers running, its last stop clean; Debian stopped; Work running, stop only; docker-desktop left to Docker Desktop; under them, the recent stops and starts. On the right, Ubuntu-24.04: its last stop step by step, its next stop, its containers, its choices and its stops." src="assets/screen-light.png">
+  <img alt="The screen in two panes. Left: four distributions, Ubuntu-24.04 selected, running, set up and started at sign-in, three of its four containers up, its last stop clean; Debian stopped; Work running, stop only; docker-desktop left to Docker Desktop; then the recent stops and starts. Right: Ubuntu-24.04's last stop step by step, its next stop, containers, choices and stops." src="assets/screen-light.png">
 </picture>
 
 The screen is drawn from the commands' JSON, the same in PowerShell and in a WSL terminal, so everything on it is a

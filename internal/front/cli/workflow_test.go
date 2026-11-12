@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,5 +56,38 @@ func TestTheWorkflowTellsAScoopInstallLeftToScoopByTheWordsTheProgramSays(t *tes
 	code, out, errOut := fi.run(t, "", "uninstall", "--yes")
 	if code != exitOK || !words.MatchString(out+errOut) || !there(fi.exe) {
 		t.Fatalf("the step looks for %q; exit %d: %s%s", words, code, out, errOut)
+	}
+}
+
+func TestTheWorkflowTellsAProgramLeftToAnAdministratorByTheWordsTheProgramSays(t *testing.T) {
+	// The release's check with a real standard user runs their uninstall
+	// of a program under Program Files and looks, with exit code 0, for the
+	// line that says the program stays.
+	words := workflowWords(t, "installers.yml", "$code -ne 0 -or $said -notmatch '")
+	fi := installed(t, "wsl-spawner")
+	fi.a.PC.CanDelete = func(string) error { return fs.ErrPermission }
+	code, out, errOut := fi.run(t, "", "uninstall", "--yes")
+	if code != exitOK || !words.MatchString(out+errOut) || !there(fi.exe) {
+		t.Fatalf("the step looks for %q; exit %d: %s%s", words, code, out, errOut)
+	}
+}
+
+func TestTheWorkflowTellsWhatAStandardUsersCheckSeesByTheWordsTheProgramSays(t *testing.T) {
+	// The same check has the standard user run check, and looks for the
+	// hook said as installed and for no finding that someone can change
+	// its program: the two phrases as check says them.
+	found := workflowWords(t, "installers.yml", "if ($said -notmatch '")
+	changeable := workflowWords(t, "installers.yml", "' -or $said -match '")
+	a, _ := pc(t)
+	checkPC(t, a, "[Logoff]\r\n0CmdLine=C:\\Tools\\wsl-spawnerw.exe\r\n0Parameters=logoff\r\n")
+	out, _, _ := cli(t, a, false, "check")
+	if !found.MatchString(out) || changeable.MatchString(out) {
+		t.Fatalf("the step looks for %q and for no %q in\n%s", found, changeable, out)
+	}
+	// With someone who can change the program, the finding has the words
+	// the step looks for.
+	a.PC.WhoElseCanChange = func(string, bool) (string, string, error) { return `BUILTIN\Users`, `C:\Tools`, nil }
+	if out, _, _ = cli(t, a, false, "check"); !changeable.MatchString(out) {
+		t.Fatalf("the step looks for %q in\n%s", changeable, out)
 	}
 }

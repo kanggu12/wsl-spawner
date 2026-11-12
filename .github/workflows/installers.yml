@@ -2,8 +2,9 @@ name: installers
 
 # The installers as people run them, from a published release: install.ps1
 # in PowerShell 7 and in Windows PowerShell 5.1, on x64 and on ARM64, where it
-# must pick the arm64 zip by itself; the Scoop manifest; and the demo image.
-# Each installs, runs the program, and removes it again.
+# must pick the arm64 zip by itself; an administrator's install under Program
+# Files, with a standard user after it; the Scoop manifest; and the demo
+# image. Each installs, runs the program, and removes it again.
 # A release made by the release workflow does not start other workflows, so
 # that workflow calls this one once the release is out.
 on:
@@ -105,6 +106,80 @@ jobs:
           # The program removes its folder a moment after it exits.
           for ($i = 0; $i -lt 60 -and (Test-Path (Split-Path $exe)); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path (Split-Path $exe)) { 'the folder is still there'; exit 1 }
+          exit 0
+
+  standard-user:
+    name: an administrator's install, and a standard user after it
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      # As docs/setup.md says for a standard user: an administrator installs
+      # under Program Files, and the sign-out hook from there. Then a real
+      # standard user, a member of Users and nothing more, looks at it and
+      # uninstalls: the hook's program is one they cannot change, and the
+      # program one they may not delete.
+      - name: install under Program Files, hook, a standard user's check and uninstall, remove
+        shell: pwsh
+        env:
+          WANT: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $env:WSL_SPAWNER_VERSION = $env:WANT
+          $env:WSL_SPAWNER_BIN_DIR = "$env:ProgramFiles\wsl-spawner"
+          $env:WSL_SPAWNER_NO_SETUP = '1'
+          irm "https://github.com/$env:REPO/releases/download/$env:WANT/install.ps1" | iex
+          $dir = "$env:ProgramFiles\wsl-spawner"
+          $exe = "$dir\wsl-spawner.exe"
+          $v = & $exe version
+          $v
+          if ($v -notmatch ('^wsl-spawner ' + [regex]::Escape($env:WANT) + ' ')) { 'not the release asked for'; exit 1 }
+          # The runner is an administrator: the hook goes in with no question
+          # from Windows. 3 is installed, but not read by Windows yet.
+          & $exe hook install --yes
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) { "hook install exited $LASTEXITCODE"; exit 1 }
+          # The standard user, with a password of this run's own.
+          $pw = 'Wsp!' + [guid]::NewGuid().ToString('N').Substring(0, 20) + 'aA1'
+          net.exe user wspstd $pw /add /y | Out-Null
+          if ($LASTEXITCODE -ne 0) { 'the account was not made'; exit 1 }
+          $cred = [pscredential]::new('wspstd', (ConvertTo-SecureString $pw -AsPlainText -Force))
+          # Where that user and this one both write: what the program printed.
+          $share = 'C:\Users\Public\wsl-spawner-standard-user'
+          New-Item -ItemType Directory -Path $share -Force | Out-Null
+          icacls $share /grant '*S-1-1-0:(OI)(CI)M' | Out-Null
+          # AsStandardUser runs the program with $arguments as that user, in
+          # their own environment, and leaves what it printed in $said and
+          # its exit code in $code.
+          function AsStandardUser([string]$arguments) {
+            $out = "$share\out.txt"
+            Remove-Item -LiteralPath $out -ErrorAction SilentlyContinue
+            Set-Content -LiteralPath "$share\run.cmd" -Encoding ascii -Value @('@echo off', "`"$exe`" $arguments > `"$out`" 2>&1", "(echo exit=%ERRORLEVEL%) >> `"$out`"")
+            $p = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c', "$share\run.cmd" -Credential $cred -LoadUserProfile -UseNewEnvironment -WorkingDirectory $share -PassThru
+            if (-not $p.WaitForExit(120000)) { "wsl-spawner $arguments did not end for the standard user"; exit 1 }
+            $script:said = Get-Content -LiteralPath $out -Raw
+            $script:code = if ($script:said -match '(?m)^exit=(\d+)\s*$') { [int]$Matches[1] } else { -1 }
+            "as the standard user, wsl-spawner $arguments :"
+            $script:said
+          }
+          # Their check finds the hook, and no one who can change its program.
+          AsStandardUser 'check'
+          if ($said -notmatch 'sign-out hook installed' -or $said -match 'can change') { 'the standard user does not see the hook as it is'; exit 1 }
+          # The hook comes out as the administrator; with it there, the
+          # standard user's uninstall would have Windows ask for one.
+          & $exe hook remove --yes
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) { "hook remove exited $LASTEXITCODE"; exit 1 }
+          # Their uninstall takes out what was theirs and leaves the program,
+          # which they may not delete, saying who removes it.
+          AsStandardUser 'uninstall --yes'
+          if ($code -ne 0 -or $said -notmatch 'the program stays in') { 'the standard user is not told the program stays'; exit 1 }
+          foreach ($f in 'wsl-spawner.exe', 'wsl-spawnerw.exe', 'wsl-spawner') { if (-not (Test-Path "$dir\$f")) { "$f went"; exit 1 } }
+          # The administrator's uninstall removes it.
+          & $exe uninstall --yes
+          if ($LASTEXITCODE -ne 0) { "the administrator's uninstall exited $LASTEXITCODE"; exit 1 }
+          # The program removes its folder a moment after it exits.
+          for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $dir) { 'the folder is still there'; exit 1 }
+          net.exe user wspstd /delete | Out-Null
           exit 0
 
   scoop:

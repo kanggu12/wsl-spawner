@@ -228,8 +228,8 @@ func (p *uninstallPlan) leftovers(ctx context.Context, a *app.App) {
 // Windows answers it, without deleting any: no to any of them is no. One
 // Windows gives no answer for, in use or not there, counts as yes: the
 // removal itself says how it went. A process run as administrator is not
-// asked: it is the one a program under Program Files is left to, and
-// Windows' answer for one is not always the access lists'.
+// asked: it is the one a program under Program Files is left to, and what
+// it cannot remove either, the removal says.
 func (p uninstallPlan) deletable(pc app.PC) bool {
 	if pc.CanDelete == nil || pc.Elevated() {
 		return true

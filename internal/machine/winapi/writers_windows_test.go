@@ -155,32 +155,54 @@ func TestCanDeleteAsksWithoutDeleting(t *testing.T) {
 	}
 	// Only reading it, and nothing but reading in its folder, as an
 	// administrator's install under Program Files gives a standard user:
-	// they may not. The owner may always set the lists back, for the end.
+	// they may not, run as administrator or not, as the lists hold no
+	// entry but this user's. The lists are set whole: taking the inherited
+	// entries off, as icacls /inheritance:r does, leaves every entry where
+	// the folder above does not mark its entries as inherited, which a
+	// runner's temporary folder does not, and this user's own full
+	// control among them.
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid := "*" + user.User.Sid.String()
+	sid := user.User.Sid
+	// Everything for this user again at the end, as the owner may always
+	// set it: the test's folder is removed after.
 	t.Cleanup(func() {
-		icacls(t, dir, "/grant", sid+":(OI)(CI)F")
-		icacls(t, f, "/grant", sid+":F")
+		onlyThis(t, dir, sid, windows.GENERIC_ALL)
+		onlyThis(t, f, sid, windows.GENERIC_ALL)
 	})
-	icacls(t, dir, "/inheritance:r", "/grant:r", sid+":(RX)")
-	icacls(t, f, "/inheritance:r", "/grant:r", sid+":(R)")
-	err = CanDelete(f)
-	switch {
-	case windowsTokenElevated():
-		// Not asserted for an elevated process: on GitHub's runners, where
-		// the tests run elevated, Windows let this open through though the
-		// lists give this user reading alone. Whether an administrator at
-		// work may delete is not what an uninstall asks: it asks for the
-		// person at a terminal that is not elevated.
-		t.Logf("elevated: a file this user may only read: %v", err)
-	case !errors.Is(err, fs.ErrPermission):
-		t.Fatalf("a file this user may only read: %v", err)
+	onlyThis(t, f, sid, windows.FILE_GENERIC_READ)
+	onlyThis(t, dir, sid, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE)
+	if err := CanDelete(f); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("a file this user may only read, in a folder they may only read: %v", err)
 	}
 	if _, err := os.Stat(f); err != nil {
 		t.Fatalf("the file went: %v", err)
+	}
+}
+
+// onlyThis gives path an access list of one entry and none inherited: sid
+// may do what access says, and no one else anything.
+func onlyThis(t *testing.T, path string, sid *windows.SID, access windows.ACCESS_MASK) {
+	t.Helper()
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: access,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       windows.NO_INHERITANCE,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  windows.TRUSTEE_IS_USER,
+			TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("a list for %s: %v", path, err)
+	}
+	// Protected: no entry of the folder above comes into it.
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
+		t.Fatalf("setting the list of %s: %v", path, err)
 	}
 }
 

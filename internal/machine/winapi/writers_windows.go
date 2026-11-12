@@ -232,9 +232,7 @@ func finalPath(path string) (string, error) {
 // and deletes nothing: it opens the file for deletion, as the link it may
 // be, and closes it again. Windows lets the open through for DELETE on the
 // file or the right to delete what is in its folder; an error that is
-// fs.ErrPermission when it does not. It is for a process that is not
-// elevated: for an elevated one the answer was seen to be yes where the
-// access lists said no.
+// fs.ErrPermission when it does not.
 func CanDelete(path string) error {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {

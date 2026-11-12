@@ -6,6 +6,39 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-13
+
+A review of the screen and the commands: what the screen cut or left out, a stop the screen's Ctrl+C could end part
+way, and clearer words.
+
+### Changed
+
+- The main screen's bar shows `S  stop all` while one of wsl-spawner's distributions runs, and `r  read again`, where
+  the terminal is wide enough for them.
+- The check says `the start before this one ended …`, where `its last start ended …` read as the start now running.
+- A distribution whose start is the first noted says `none yet` in the table's last stop and in `status`, where
+  `first start noted` took the room of the containers' column.
+- In Korean, the boxes that ask name the distribution first and ask politely (`Ubuntu 배포판을 멈출까요?`), and signing
+  out is 로그아웃 throughout, where some said 로그오프; the path in gpedit keeps Windows' own words.
+
+### Fixed
+
+- Ctrl+C on the screen during a stop closed the screen and ended the program doing the stop with it: the steps inside
+  the distribution went on, but WSL was not asked to end it once they were done, `S` did not stop WSL, and the stop was
+  not written to the history. Ctrl+C now says the stop goes on to its end, and the screen closes as it ends.
+- The pane's head cut what it says of a distribution (`1 failed un…`). It goes on under the name, whole.
+- In two columns, the check cut a path longer than a column with `…`. It breaks the path onto the next line.
+- At 80 columns the table left out the containers' column. It says the tool a distribution is left to in short
+  (`Docker Desktop's`) where the table would not fit.
+- The header stopped counting a distribution kept running once it was stopped. It counts what is set, as it does for
+  sign-in.
+- Starting a distribution with nothing of wsl-spawner's in it, the box said what its service brings back. It says the
+  distribution just starts.
+- Setup's last step kept the open step's square once its changes were made. It is checked, as the steps before it.
+- A mistyped command suggested the first near command in the list, not the nearest: `stp` suggested `set`. It
+  suggests the nearest: `stop`.
+- A stop with `--shutdown` said WSL `stops once every distribution has`, cut short. It says `has stopped`.
+
 ## [0.2.0] - 2026-11-13
 
 What ended a start that was cut, Windows' wait raised for the sign-out hook, a new look for the screen and setup, and
@@ -222,7 +255,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.0
 [0.1.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.1

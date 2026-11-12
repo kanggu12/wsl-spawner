@@ -133,6 +133,9 @@ type runState struct {
 // model is the screen's state.
 type model struct {
 	ctx context.Context
+	// leaving is set once Ctrl+C was pressed while a stop runs: the
+	// screen closes as the stop ends.
+	leaving bool
 	// play is, in a snapshot, how far into a stop its frame is drawn, and
 	// the clocks that measure it; its to is 0 to play the stop to its end.
 	play *playback
@@ -341,6 +344,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case stopMsg:
+		// Ctrl+C was pressed during the stop: it ended, the screen closes.
+		if m.leaving {
+			return m.endStop(msg), tea.Quit
+		}
 		return m.endStop(msg), m.load()
 	case startMsg:
 		return m.endStart(msg), m.load()
@@ -362,6 +369,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	if key == "ctrl+c" {
+		// A stop under way goes on to its end, whatever a key does: the
+		// program it runs in may not outlive the screen (in a WSL terminal,
+		// WSL ends it with the screen), which would leave the distribution
+		// not ended and the stop not in the history. Ctrl+C says so, and
+		// the screen closes as the stop ends.
+		if m.mode == modeRun && m.run != nil && !m.run.done && m.run.act.kind == "stop" {
+			m.leaving = true
+			return m, nil
+		}
 		return m, tea.Quit
 	}
 	// The box asks first: enter does it, esc does not.
@@ -572,7 +588,10 @@ func (m model) do(a action) (tea.Model, tea.Cmd) {
 				events <- bugMsg{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		res, err := c.Stop(ctx, a.names, a.shutdown, func(e api.StopEvent) { events <- eventMsg(e) })
+		// Not ended with the screen: a stop asked for runs to its end, the
+		// distribution stopped, its history written, whenever the screen
+		// closes.
+		res, err := c.Stop(context.WithoutCancel(ctx), a.names, a.shutdown, func(e api.StopEvent) { events <- eventMsg(e) })
 		events <- stopMsg{res: res, err: err}
 	}()
 	return m, tea.Batch(r.next(), tick())

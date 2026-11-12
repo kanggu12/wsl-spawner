@@ -526,7 +526,13 @@ func (w wizard) rail(rw int) []string {
 		case i < cur:
 			out = append(out, " "+ui.Fg(t.Mark).Render("✓")+" "+ui.Fg(t.Muted).Render(name))
 		case i == cur:
-			out = append(out, ui.Highlight(" "+ui.Fg(t.Mark).Render(ui.Block)+" "+lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(name), t.Selected, rw))
+			// The open step, on the panel's color; the last, once its
+			// changes are made, checked as the ones before it.
+			mark := ui.Block
+			if w.page == pApply && w.done {
+				mark = "✓"
+			}
+			out = append(out, ui.Highlight(" "+ui.Fg(t.Mark).Render(mark)+" "+lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(name), t.Selected, rw))
 		default:
 			out = append(out, " "+ui.Fg(t.Faint).Render(ui.Block+" "+name))
 		}

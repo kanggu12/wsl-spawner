@@ -48,7 +48,9 @@ Each step gets `TERM` when its time is up; one that goes on is killed 5 seconds 
 `timeout` can do that, and a step that went on past its time ran out of it, whatever it returned.
 
 Every step together has `stop_limit` seconds, 300 by default. Then wsl-spawner runs `wsl --terminate`: WSL ends what is
-left, with the few seconds it gives. A stop that was asked for always leaves the distribution stopped, Ctrl+C included.
+left, with the few seconds it gives. A stop that was asked for always leaves the distribution stopped, Ctrl+C included:
+`wsl-spawner stop` stops waiting for the steps and WSL ends what is left; on the screen Ctrl+C says the stop goes on to
+its end, and the screen closes as it ends.
 
 Distributions stop at the same time. `--shutdown`, `S` and the sign-out hook then run `wsl --shutdown`, which stops
 every distribution, wsl-spawner's or not, and WSL's VM.

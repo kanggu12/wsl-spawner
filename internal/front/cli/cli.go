@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 
@@ -202,11 +203,37 @@ func usageHint(root *cobra.Command, args []string, err error) error {
 		// is its default too.
 		c.SuggestionsMinimumDistance = 2
 		if sug := c.SuggestionsFor(w); len(sug) > 0 {
+			// Cobra lists them in the commands' order: the nearest goes
+			// first, so stp means stop and not set.
+			slices.SortStableFunc(sug, func(a, b string) int { return editDistance(w, a) - editDistance(w, b) })
 			return hint(fmt.Errorf("%w: %s", errUsage, first), "did you mean: "+c.CommandPath()+" "+sug[0])
 		}
 		return hint(fmt.Errorf("%w: %s", errUsage, first), c.CommandPath()+" --help lists the commands")
 	}
 	return hint(fmt.Errorf("%w: %s", errUsage, trimUsage(first)), c.CommandPath()+" --help")
+}
+
+// editDistance is how many letters must be put in, taken out or changed to
+// make a into b (Levenshtein), case aside.
+func editDistance(a, b string) int {
+	ra, rb := []rune(strings.ToLower(a)), []rune(strings.ToLower(b))
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
 }
 
 // trimUsage drops the "usage: " that marks a mistake in how a command was

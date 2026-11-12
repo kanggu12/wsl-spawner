@@ -41,7 +41,7 @@ running `dockerd`, is Docker Desktop's or another engine's: it has no step.
 
 ## The last start ended without its time
 
-`check` says `✗ its last start ended without wsl-spawner's stop`: WSL or Windows ended the distribution with the few
+`check` says `✗ the start before this one ended without wsl-spawner's stop`: WSL or Windows ended the distribution with the few
 seconds WSL gives. Something stopped WSL before wsl-spawner's stop could run: an update of WSL, `wsl --shutdown` or
 `wsl --terminate` typed by hand, a crash, or a sign-out, shutdown or restart with no hook installed. `wsl-spawner hook install` covers sign-out, shutdown and restart;
 stop it with `wsl-spawner stop` before stopping WSL by hand.

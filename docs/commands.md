@@ -105,10 +105,12 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 | `q` | quit |
 
 The bar at the bottom shows the keys that do something to the distribution selected: `s` for one running, `t` for one
-stopped, and `m`, `k` and `l` only where systemd runs or is not known yet. Each change asks in a box: `enter` or `y`
-does it, `esc` or `n` does not. On the check, history and help screens, `↑` `↓` `pgup` `pgdown` scroll, `esc` goes
-back, and `r` reads the check again; on the main screen `esc` does nothing, so going back twice does not quit. While a
-stop runs, its steps play on the screen; `enter` goes back once it ends. In setup, `enter`, `→`, `l` and `tab` go on,
+stopped, and `m`, `k` and `l` only where systemd runs or is not known yet; `S` while one of wsl-spawner's runs, and `r`,
+where the terminal is wide enough for them. Each change asks in a box: `enter` or `y` does it, `esc` or `n` does not.
+On the check, history and help screens, `↑` `↓` `pgup` `pgdown` scroll, `esc` goes back, and `r` reads the check
+again; on the main screen `esc` does nothing, so going back twice does not quit. While a stop runs, its steps play on
+the screen; `enter` goes back once it ends. `ctrl+c` during a stop says the stop goes on to its end, and the screen
+closes as it ends. In setup, `enter`, `→`, `l` and `tab` go on,
 `←`, `h`, `shift+tab` and `esc` go back a page, `↑` `↓` choose, `space` changes a distribution's level or the hook's
 choice, and `q` quits; `esc` on the first page quits as well.
 

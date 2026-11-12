@@ -167,11 +167,12 @@ func (m model) atLogon() int {
 	return n
 }
 
-// kept counts the distributions kept running.
+// kept counts the distributions kept running, as set: one stopped by hand
+// is still kept running once it starts, as the count of sign-in's is.
 func (m model) kept() int {
 	n := 0
 	for _, d := range m.st.List {
-		if d.Probe != nil && d.Probe.KeptRunning {
+		if s, known := m.stateOf(d); known && s.Keep {
 			n++
 		}
 	}
@@ -208,7 +209,12 @@ func (m model) mainView() string {
 	// The table takes what it needs, up to half the rows when the
 	// distributions are many: the selected one's row stays among those
 	// shown, and its details in sight under it.
-	body := m.table(m.width, max(4, h/2))
+	// The tool a distribution is left to in short, before a column goes.
+	one := m
+	if one.tableWidth() > m.width {
+		one.shortOwner = true
+	}
+	body := one.table(m.width, max(4, h/2))
 	// recentIn is set when the details hold the newest stops and starts in
 	// their right column, on a wide screen.
 	recentIn := false
@@ -339,8 +345,7 @@ func (m model) pane(w, h int) []string {
 	if !ok || h < 1 {
 		return nil
 	}
-	bold := lipgloss.NewStyle().Bold(true).Foreground(t.Ink)
-	lines := []string{ui.Fit(bold.Render(d.Name)+ui.Fg(t.Muted).Render(m.facts(d)), w)}
+	lines := m.headLines(d, w)
 	text, st := m.verdict(d)
 	lines = append(lines, m.wrapTo(text, w, st)...)
 	if !ours(d) {
@@ -973,7 +978,9 @@ func (m model) endPieces(d api.Distro, long bool) []piece {
 		return []piece{{"–", ui.Fg(t.Faint), false}}
 	}
 	p := *d.Probe
-	key := map[string]string{"unknown": "end.unknown", "first": "end.first", "clean": "end.clean", "limit": "end.limit",
+	// The first start noted has no stop before it to say: none yet, which
+	// keeps the column short enough for the table's others.
+	key := map[string]string{"unknown": "end.unknown", "first": "end.none", "clean": "end.clean", "limit": "end.limit",
 		"failed": "end.failed", "cut": "end.cut"}[p.LastEnd.How]
 	if key == "" {
 		key = "end.unknown"
@@ -1165,8 +1172,7 @@ func (m model) details(w, h int) (lines []string, recentIn bool) {
 	if !ok || h < 1 {
 		return nil, false
 	}
-	bold := lipgloss.NewStyle().Bold(true).Foreground(t.Ink)
-	lines = []string{ui.Fit(bold.Render(d.Name)+ui.Fg(t.Muted).Render(m.facts(d)), w)}
+	lines = m.headLines(d, w)
 	// The verdict wraps rather than lose its end.
 	text, st := m.verdict(d)
 	lines = append(lines, m.wrapTo(text, w, st)...)
@@ -1338,9 +1344,25 @@ func cut(lines []string, h int) []string {
 	return lines
 }
 
-// facts are the selected distribution's few facts after its name: the
-// default one, and whether systemd runs in it.
-func (m model) facts(d api.Distro) string {
+// headLines are the selected distribution's name and its facts in w
+// cells, the facts going on under it where they do not fit: whole, never
+// cut short.
+func (m model) headLines(d api.Distro, w int) []string {
+	t := m.th
+	ps := []piece{{d.Name + " ", lipgloss.NewStyle().Bold(true).Foreground(t.Ink), true}}
+	for i, f := range m.factParts(d) {
+		sep := " "
+		if i > 0 {
+			sep = " " + ui.Sep() + " "
+		}
+		ps = append(ps, piece{sep + f, ui.Fg(t.Muted), true})
+	}
+	return wrapPieces("", "  ", w, ps...)
+}
+
+// factParts are the selected distribution's few facts after its name, one
+// by one: the default one, whether systemd runs in it, its failed units.
+func (m model) factParts(d api.Distro) []string {
 	var parts []string
 	if d.Default {
 		parts = append(parts, i18n.T("fact.default"))
@@ -1366,10 +1388,7 @@ func (m model) facts(d api.Distro) string {
 			parts = append(parts, i18n.T("end.first"))
 		}
 	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "  " + strings.Join(parts, " "+ui.Sep()+" ")
+	return parts
 }
 
 // verdict is the line that says what matters most about a distribution,
@@ -1900,13 +1919,21 @@ func (m model) footer() string {
 		// Left to WSL: making it wsl-spawner's again is all there is to do.
 		keys = append(keys, [2]string{"x", i18n.T("key.noskip")})
 	}
+	// Every one of wsl-spawner's at once, where one runs: as help lists it.
+	for _, x := range m.st.List {
+		if ours(x) && x.Running {
+			keys = append(keys, [2]string{"S", i18n.T("key.stopall")})
+			break
+		}
+	}
 	return m.keyBar(append(keys, [2]string{"c", i18n.T("key.check")}, [2]string{"h", i18n.T("key.history")},
-		[2]string{"?", i18n.T("key.help")}, [2]string{"q", i18n.T("key.quit")}))
+		[2]string{"r", i18n.T("key.reload")}, [2]string{"?", i18n.T("key.help")}, [2]string{"q", i18n.T("key.quit")}))
 }
 
 // dropOrder is which keys leave the bar first when it does not fit; the help
-// screen lists them all.
-var dropOrder = []string{"↑↓", "l", "k", "m", "h", "t", "c", "esc"}
+// screen lists them all. Stopping all and reading again go first: help and
+// the check say them.
+var dropOrder = []string{"S", "r", "↑↓", "l", "k", "m", "h", "t", "c", "esc"}
 
 // keyBar joins keycaps to fit the width, dropping the least needed first.
 func (m model) keyBar(keys [][2]string) string {
@@ -2154,7 +2181,15 @@ func (m model) askBox(a action) string {
 			parts = append(parts, one(i18n.T("ask.shutdown"), ui.Fg(t.Ink), 1))
 		}
 	case "start":
-		parts = append(parts, one(i18n.T("ask.start", a.names[0]), bold, 0), one(i18n.T("ask.start.back"), ui.Fg(t.Ink), 1))
+		// What comes back is said only of a distribution wsl-spawner is set
+		// up in; one known not to be just starts.
+		back := i18n.T("ask.start.back")
+		for _, d := range m.st.List {
+			if s, known := m.stateOf(d); d.Name == a.names[0] && known && !s.Managed {
+				back = i18n.T("ask.start.plain")
+			}
+		}
+		parts = append(parts, one(i18n.T("ask.start", a.names[0]), bold, 0), one(back, ui.Fg(t.Ink), 1))
 	case "set":
 		parts = append(parts, one(i18n.T("ask.set", a.names[0]), bold, 0))
 		changes := list(1)
@@ -2387,7 +2422,17 @@ func (m model) runView() string {
 		body = append(append([]string{}, head[0]), body[len(body)-(h-1):]...)
 	}
 	keys := m.keyBar([][2]string{{"ctrl+c", i18n.T("key.quit")}})
+	if r.act.kind == "stop" {
+		// A stop is not left part way: Ctrl+C closes the screen as it ends.
+		keys = m.keyBar([][2]string{{"ctrl+c", i18n.T("key.closeafter")}})
+	}
 	status := " " + ui.Fg(t.Muted).Render(i18n.T("run.going"))
+	if m.leaving {
+		// After Ctrl+C: the stop goes on, and the screen closes as it ends;
+		// there is nothing left to press.
+		status = " " + ui.Fg(t.Cat[ui.CatWarn]).Render(i18n.T("run.goeson"))
+		keys = ""
+	}
 	if r.done {
 		keys = m.keyBar([][2]string{{"⏎", i18n.T("key.back")}})
 		status = ""
@@ -2958,7 +3003,9 @@ const hyphen = "‑"
 
 // wrapTo wraps s to w cells, each line in st, words whole.
 func (m model) wrapTo(s string, w int, st lipgloss.Style) []string {
-	wrapped := strings.Split(ansi.Wordwrap(strings.ReplaceAll(s, "-", hyphen), max(10, w), ""), "\n")
+	// Words wrap at spaces; one longer than the line, as a path, breaks
+	// where the line ends rather than being cut short.
+	wrapped := strings.Split(ansi.Wrap(strings.ReplaceAll(s, "-", hyphen), max(10, w), ""), "\n")
 	for i, l := range wrapped {
 		wrapped[i] = st.Render(strings.ReplaceAll(l, hyphen, "-"))
 	}

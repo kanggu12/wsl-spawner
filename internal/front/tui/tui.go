@@ -219,8 +219,10 @@ func runCmd(cmd tea.Cmd) tea.Msg {
 // namedKeys are the keys a snapshot names in words: every key the screen
 // and the wizard answer that is not a letter or a sign of its own.
 var namedKeys = map[string]tea.KeyPressMsg{
-	"enter":  {Code: tea.KeyEnter},
-	"esc":    {Code: tea.KeyEscape},
+	"enter": {Code: tea.KeyEnter},
+	"esc":   {Code: tea.KeyEscape},
+	// Ctrl+C, which a stop under way answers first with what it does.
+	"ctrl+c": {Code: 'c', Mod: tea.ModCtrl},
 	"down":   {Code: tea.KeyDown},
 	"up":     {Code: tea.KeyUp},
 	"left":   {Code: tea.KeyLeft},

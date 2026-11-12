@@ -157,6 +157,13 @@ func TestAMistypedHookCommandIsAMistakeWithTheCommandMeant(t *testing.T) {
 	if _, errOut, code := cli(t, a, false, "uninstal"); code != exitUsage || !strings.Contains(errOut, "did you mean: wsl-spawner uninstall") {
 		t.Fatalf("exit %d: %s", code, errOut)
 	}
+	// The nearest command, not the first cobra lists: set comes before stop
+	// and start, two letters from each of these.
+	for typo, want := range map[string]string{"stp": "stop", "strt": "start", "staus": "status"} {
+		if _, errOut, code := cli(t, a, false, typo); code != exitUsage || !strings.Contains(errOut, "did you mean: wsl-spawner "+want+"\n") && !strings.HasSuffix(strings.TrimSpace(errOut), "did you mean: wsl-spawner "+want) {
+			t.Errorf("%s: exit %d: %s", typo, code, errOut)
+		}
+	}
 	// hook alone still shows its commands, and ends with 0.
 	if out, errOut, code := cli(t, a, false, "hook"); code != exitOK || !strings.Contains(out, "install") || !strings.Contains(out, "remove") || !strings.Contains(out, "status") || errOut != "" {
 		t.Fatalf("exit %d: %q %q", code, out, errOut)

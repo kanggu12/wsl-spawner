@@ -233,3 +233,57 @@ func TestTheHistorysDistributionsShareTheirBars(t *testing.T) {
 		}
 	}
 }
+
+func TestAFreshInstallsTableKeepsItsColumns(t *testing.T) {
+	// A distribution whose start is the first noted has no stop before it
+	// to say: a short "none yet", and the table keeps its containers'
+	// column; at 80 columns too, where the tool a distribution is left to
+	// is said in short first.
+	f := ansi.Strip(frame(t, "en", 80, 24, ""))
+	if !strings.Contains(lineWith(f, "DISTRIBUTION"), "CONTAINERS") {
+		t.Errorf("80x24 dropped the containers' column:\n%s", f)
+	}
+}
+
+func TestAStopKeepsItsKeptRunningCount(t *testing.T) {
+	// The header counts what is set, as for sign-in: a distribution kept
+	// running and stopped by hand is still counted.
+	f := ansi.Strip(frame(t, "en", 120, 30, "s enter enter"))
+	if head := strings.Split(f, "\n")[0]; !strings.Contains(head, "1 kept running") || !strings.Contains(head, "1 at sign-in") {
+		t.Errorf("the header after a stop: %q", head)
+	}
+}
+
+func TestStartingADistributionNotSetUpSaysItJustStarts(t *testing.T) {
+	// Work runs with nothing of wsl-spawner's set up in it: stopped, then
+	// started again, its box does not speak of what wsl-spawner brings back.
+	f := ansi.Strip(frame(t, "en", 120, 30, "down down s enter enter t"))
+	if !strings.Contains(f, "Nothing of wsl-spawner's is set up in it: it just starts.") || strings.Contains(f, "its service brings back") {
+		t.Errorf("the start box of Work:\n%s", f)
+	}
+}
+
+func TestTheFooterHasStopAllAndReadAgainWhereThereIsRoom(t *testing.T) {
+	wide := ansi.Strip(frame(t, "en", 160, 30, ""))
+	foot := strings.Split(strings.TrimRight(wide, "\n"), "\n")
+	last := foot[len(foot)-1]
+	if !strings.Contains(last, "S  stop all") || !strings.Contains(last, "r  read again") {
+		t.Errorf("160 columns: %q", last)
+	}
+	// Short of room, they go first.
+	narrow := ansi.Strip(frame(t, "en", 80, 24, ""))
+	nf := strings.Split(strings.TrimRight(narrow, "\n"), "\n")
+	if l := nf[len(nf)-1]; strings.Contains(l, "stop all") || !strings.Contains(l, "q  quit") {
+		t.Errorf("80 columns: %q", l)
+	}
+}
+
+func TestTheWizardChecksItsLastStepOnceDone(t *testing.T) {
+	// Once applied, every step on the rail is checked, the last one too:
+	// the rail's row, not the header's "7 of 7 · Done".
+	f, _ := wizardOn(t, "en", 120, 30, wizardPages["applied"])
+	plain := ansi.Strip(f)
+	if !strings.Contains(plain, "\n  ✓ Done ") {
+		t.Errorf("the rail's last step is not checked:\n%s", plain)
+	}
+}

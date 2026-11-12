@@ -370,7 +370,7 @@ func containerWords(l look, p inside.Probe) string {
 func endWords(l look, p inside.Probe, cause inside.Cause) string {
 	end, prev := p.LastEnd()
 	words := map[inside.Ending]string{
-		inside.EndUnknown: "end.unknown", inside.EndFirst: "end.first", inside.EndClean: "end.clean",
+		inside.EndUnknown: "end.unknown", inside.EndFirst: "end.none", inside.EndClean: "end.clean",
 		inside.EndLimit: "end.limit", inside.EndFailed: "end.failed", inside.EndCut: "end.cut",
 	}
 	s := i18n.T(words[end])

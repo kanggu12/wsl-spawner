@@ -432,3 +432,77 @@ func TestTheLastStopShowsItsOwnStepsNotANewerStops(t *testing.T) {
 		t.Errorf("another stop's steps: %q", pane)
 	}
 }
+
+func TestThePanesHeadWrapsItsFactsWhole(t *testing.T) {
+	// A default distribution with systemd and a failed unit: at 120
+	// columns its facts go on under its name, whole, never cut.
+	d := api.Distro{Name: "Ubuntu-22.04", Default: true, Running: true, Kind: "set-up", Version: 2,
+		Probe: &api.Probe{SetUp: true, Systemd: "running", Failed: []string{"nightly-backup.service"}, LastEnd: api.End{How: "first"}}}
+	f := ansi.Strip(mainWith(120, 30, 0, d).View().Content)
+	if pane := PaneText(f); !strings.Contains(pane, "1 failed unit") || strings.Contains(strings.Join(RightPane(f), "\n"), "…") {
+		t.Errorf("the pane's head:\n%s", f)
+	}
+	// And the first start noted, with no stop before it: none yet.
+	if row := TableRow(f, "Ubuntu-22.04"); !strings.Contains(row, "none yet") {
+		t.Errorf("the row: %q", row)
+	}
+}
+
+func TestACheckFindingsLongPathIsBrokenNotCut(t *testing.T) {
+	// A path longer than a column of the check goes on to the next line,
+	// whole, where cutting it would leave the person nothing to use.
+	m := newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded, m.mode = 120, 30, true, modeCheck
+	path := `C:\Users\someone\AppData\Local\Programs\wsl-spawner\wsl-spawnerw.exe`
+	m.check = &api.Check{Worst: "info", Groups: []api.CheckGroup{{Name: "Stopping", Key: "stopping", Items: []api.Finding{{Mark: "info", Key: "hook.copy", Args: []any{path}}}}}}
+	f := ansi.Strip(m.View().Content)
+	if strings.Contains(f, "…") {
+		t.Errorf("cut:\n%s", f)
+	}
+	// The path's pieces, in order, wherever its lines broke.
+	joined := strings.Join(strings.Fields(strings.ReplaceAll(f, "│", " ")), "")
+	if !strings.Contains(joined, strings.ReplaceAll(path, " ", "")) {
+		t.Errorf("the path is not whole in\n%s", f)
+	}
+}
+
+func TestCtrlCDuringAStopClosesTheScreenAsTheStopEnds(t *testing.T) {
+	// Ctrl+C while a stop runs does not close the screen part way: the
+	// program the stop runs in may end with it, as WSL ends it in a WSL
+	// terminal. It says the stop goes on, and the screen closes as the
+	// stop ends.
+	m := newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded = 120, 30, true
+	m.st = api.Status{WSL: "3.0.5.0", StopLimit: 300}
+	m.run, m.mode = newRun(action{kind: "stop", names: []string{"Ubuntu-24.04"}}, time.Now()), modeRun
+	if f := ansi.Strip(m.View().Content); !strings.Contains(f, "ctrl+c  close as it ends") {
+		t.Errorf("the bar during a stop:\n%s", f)
+	}
+	for press := 1; press <= 2; press++ {
+		next, cmd := m.key(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+		m = next.(model)
+		f := ansi.Strip(m.View().Content)
+		if cmd != nil || !m.leaving || !strings.Contains(f, "the stop goes on to its end; the screen closes as it ends") {
+			t.Fatalf("Ctrl+C %d closed the screen or said nothing:\n%s", press, f)
+		}
+		// Nothing is left to press: the bar is empty.
+		if strings.Contains(f, "ctrl+c") {
+			t.Errorf("the bar after Ctrl+C:\n%s", f)
+		}
+	}
+	// The stop ends: the screen closes.
+	_, cmd := m.Update(stopMsg{})
+	if cmd == nil {
+		t.Fatal("the stop ended and the screen stayed")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("the stop ended and the screen did something else than close")
+	}
+	// A start, a matter of seconds, is left at once.
+	m = newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded = 120, 30, true
+	m.run, m.mode = newRun(action{kind: "start", names: []string{"Debian"}}, time.Now()), modeRun
+	if _, cmd := m.key(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}); cmd == nil {
+		t.Fatal("Ctrl+C during a start did not close the screen")
+	}
+}

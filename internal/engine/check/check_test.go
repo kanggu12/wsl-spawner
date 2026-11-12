@@ -194,10 +194,10 @@ func TestTheStopUnitsThatAStopPassesByAreSaid(t *testing.T) {
 	// not said either way.
 	in := base()
 	p := setUp()
-	p.StopUnits = []string{"minecraft.service", "minecarft.service", "postgresql.service", "redis.service", "slow.service"}
+	p.StopUnits = []string{"appworker.service", "appwroker.service", "postgresql.service", "redis.service", "slow.service"}
 	p.StopUnitStates = map[string]inside.StopUnitState{
-		"minecraft.service":  {Load: "loaded", Active: "active"},
-		"minecarft.service":  {Load: "not-found", Active: "inactive"},
+		"appworker.service":  {Load: "loaded", Active: "active"},
+		"appwroker.service":  {Load: "not-found", Active: "inactive"},
 		"postgresql.service": {Load: "loaded", Active: "activating"},
 		"redis.service":      {Load: "loaded", Active: "inactive"},
 	}
@@ -207,7 +207,7 @@ func TestTheStopUnitsThatAStopPassesByAreSaid(t *testing.T) {
 	for _, it := range g.Items {
 		said[it.Key] = it
 	}
-	if it, ok := said["check.d.unitsmissing"]; !ok || it.Mark != Warn || it.Args[0] != "minecarft.service" {
+	if it, ok := said["check.d.unitsmissing"]; !ok || it.Mark != Warn || it.Args[0] != "appwroker.service" {
 		t.Errorf("missing: %+v\n%q", it, keys(g))
 	}
 	if it, ok := said["check.d.unitsidle"]; !ok || it.Mark != Info || it.Args[0] != "postgresql.service (activating), redis.service (inactive)" {
@@ -362,10 +362,10 @@ func TestWSLConfigKeys(t *testing.T) {
 
 func TestStopsWSL(t *testing.T) {
 	for text, want := range map[string]bool{
-		"@echo off\r\nwsl.exe --shutdown\r\n":  true,
-		"wsl -t Ubuntu --terminate":            true,
-		"powershell -File save.ps1\r\n":        false,
-		"rem shutdown the game server first\n": false,
+		"@echo off\r\nwsl.exe --shutdown\r\n": true,
+		"wsl -t Ubuntu --terminate":           true,
+		"powershell -File save.ps1\r\n":       false,
+		"rem shutdown the app first\n":        false,
 	} {
 		if got := StopsWSL(text); got != want {
 			t.Errorf("%q: %v", text, got)

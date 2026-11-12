@@ -1,7 +1,7 @@
 # Third-party notices
 
 wsl-spawner's own code is under the MIT License ([LICENSE](../LICENSE)). Its program is built from the Go modules
-and the Go standard library below, and its logo is lettered in the Outfit font. Their licenses
+and the Go standard library below, and its logo and figures are lettered in the Outfit font. Their licenses
 follow. `scripts/third-party-notices.sh` writes this file from what the program is built from (`make notices`).
 
 | Component | Version | License | Source |
@@ -28,7 +28,7 @@ follow. `scripts/third-party-notices.sh` writes this file from what the program 
 | `golang.org/x/sync` | v0.22.0 | BSD-3-Clause | https://pkg.go.dev/golang.org/x/sync |
 | `golang.org/x/sys` | v0.47.0 | BSD-3-Clause | https://pkg.go.dev/golang.org/x/sys |
 | Go standard library | 1.26.0 | BSD-3-Clause | https://go.dev |
-| Outfit (the lettering of the logo) | 1.100 | OFL-1.1 | https://github.com/Outfitio/Outfit-Fonts |
+| Outfit (the lettering of the logo and figures) | 1.100 | OFL-1.1 | https://github.com/Outfitio/Outfit-Fonts |
 
 ## charm.land/bubbletea/v2 v2.1.1
 

@@ -57,7 +57,7 @@ out="$tmp/notices.md"
   echo "# Third-party notices"
   echo
   echo "wsl-spawner's own code is under the MIT License ([LICENSE](../LICENSE)). Its program is built from the Go modules"
-  echo "and the Go standard library below, and its logo is lettered in the Outfit font. Their licenses"
+  echo "and the Go standard library below, and its logo and figures are lettered in the Outfit font. Their licenses"
   echo "follow. \`scripts/third-party-notices.sh\` writes this file from what the program is built from (\`make notices\`)."
   echo
   echo "| Component | Version | License | Source |"
@@ -69,7 +69,7 @@ out="$tmp/notices.md"
     echo "| \`$mod\` | $ver | $(kind "$file") | https://pkg.go.dev/$mod |"
   done <"$tmp/deps"
   echo "| Go standard library | $gover | $(kind "$(go env GOROOT)/LICENSE") | https://go.dev |"
-  echo "| Outfit (the lettering of the logo) | 1.100 | OFL-1.1 | https://github.com/Outfitio/Outfit-Fonts |"
+  echo "| Outfit (the lettering of the logo and figures) | 1.100 | OFL-1.1 | https://github.com/Outfitio/Outfit-Fonts |"
   while read -r mod ver; do
     dir=$(go list -m -f '{{.Dir}}' "$mod")
     file=$(license_file "$dir")

@@ -51,20 +51,25 @@ func Snapshot(c api.Client, w, h int, dark bool, keys []string, now time.Time) s
 }
 
 // SnapshotAt is Snapshot with a stop the keys began played only to at
-// after its start: each step's end moves the clock on by the time the step
-// says it took, and the frame is drawn at that point, the step then under
-// way still running. One distribution's steps come one after another, so
-// the frame of a stop of one is as it was at that moment. 0, or an at past
-// the stop's end, plays it to its end as Snapshot does.
+// after its start. Each distribution's steps follow one another on a clock
+// of its own, as distributions stop at the same time: a step's end moves
+// that clock on by the time the step says it took, and the step that would
+// end after at is left running. The frame is drawn at that moment, and the
+// keys after it are not pressed. 0, or an at past the stop's end, draws the
+// frame Snapshot draws.
 func SnapshotAt(c api.Client, w, h int, dark bool, keys []string, now time.Time, at time.Duration) string {
 	m := newModel(context.Background(), c, dark)
 	m.width, m.height, m.now = w, h, now
 	// How far into a stop the frame is: 0 is to its end.
-	m.playTo = at
+	m.play = &playback{to: at}
 	// Load as Init would, but in this goroutine.
 	next, _ := m.Update(m.load()())
 	m = next.(model)
 	for _, k := range keys {
+		// The moment asked for has come: the keys after it wait.
+		if m.play.done() {
+			break
+		}
 		var cmd tea.Cmd
 		next, cmd = m.Update(snapshotKey(k))
 		m = next.(model)
@@ -73,11 +78,26 @@ func SnapshotAt(c api.Client, w, h int, dark bool, keys []string, now time.Time,
 	return m.View().Content
 }
 
+// playback is how far into a stop a snapshot plays it: to, and each
+// distribution's clock so far, those whose step under way would end after
+// to, and whether the frame's moment has come.
+type playback struct {
+	to     time.Duration
+	run    *runState
+	clocks map[string]time.Duration
+	cut    map[string]bool
+	frozen bool
+}
+
+// done reports whether the frame's moment has come; false without a
+// playback, as for a frame drawn at a stop's end.
+func (p *playback) done() bool { return p != nil && p.frozen }
+
 // settle runs what a key started, as the program would, until it is done:
 // the check read, a change made, a stop or start played to its end. A
 // spinner's tick is not waited for.
 func (m model) settle(cmd tea.Cmd) model {
-	for cmd != nil {
+	for cmd != nil && !m.play.done() {
 		msg := runCmd(cmd)
 		if msg == nil {
 			return m
@@ -85,10 +105,14 @@ func (m model) settle(cmd tea.Cmd) model {
 		if _, ok := msg.(tickMsg); ok {
 			return m.drain()
 		}
-		// A frame part way into a stop ends here.
-		var past bool
-		if m, past = m.clock(msg); past {
-			return m
+		// A message a part-way frame does not take: the run's next one.
+		var skip bool
+		if m, skip = m.clock(msg); skip {
+			if m.play.done() || m.run == nil || m.run.done {
+				return m
+			}
+			cmd = m.run.next()
+			continue
 		}
 		var next tea.Model
 		next, cmd = m.Update(msg)
@@ -100,12 +124,12 @@ func (m model) settle(cmd tea.Cmd) model {
 // drain plays a run's messages to its end, and reads what its end asked
 // for.
 func (m model) drain() model {
-	for m.run != nil && !m.run.done {
+	for m.run != nil && !m.run.done && !m.play.done() {
 		msg := <-m.run.events
-		// A frame part way into a stop ends here.
-		var past bool
-		if m, past = m.clock(msg); past {
-			return m
+		// A message a part-way frame does not take.
+		var skip bool
+		if m, skip = m.clock(msg); skip {
+			continue
 		}
 		next, cmd := m.Update(msg)
 		m = next.(model)
@@ -117,25 +141,56 @@ func (m model) drain() model {
 	return m
 }
 
-// clock moves a snapshot's clock on as a stop's step ends, by the time the
-// step says it took, when the frame is to be drawn part way into the stop
-// (playTo): past is set, the clock at playTo, for the step that would end
-// after it, which is left running for the frame.
-func (m model) clock(msg tea.Msg) (_ model, past bool) {
-	e, ok := msg.(eventMsg)
-	// Only a step's end moves the clock, and only for such a frame.
-	if !ok || m.playTo <= 0 || m.run == nil || e.Event != "line" || e.Kind != "done" {
+// clock keeps a snapshot's clock when its frame is drawn part way into a
+// stop (play.to): it sets the time each of the stop's messages happens at,
+// on its distribution's own clock, and says to skip a message that comes
+// after the moment asked for. At the stop's end, the frame's moment has
+// come if a distribution was still stopping then; else the stop ended
+// before it, and the frame is the one Snapshot draws.
+func (m model) clock(msg tea.Msg) (_ model, skip bool) {
+	p := m.play
+	if p == nil || p.to <= 0 || m.run == nil || m.run.done || p.frozen {
 		return m, false
 	}
-	// The time the step says it took.
-	took := time.Duration(e.Took * float64(time.Second))
-	if m.now.Add(took).Sub(m.run.started) > m.playTo {
-		// Past the moment asked for: the frame is drawn now, the step running.
-		m.now = m.run.started.Add(m.playTo)
-		return m, true
+	// A new stop: new clocks.
+	if p.run != m.run {
+		p.run, p.clocks, p.cut = m.run, map[string]time.Duration{}, map[string]bool{}
 	}
-	// The step ended this much later than it began.
-	m.now = m.now.Add(took)
+	switch e := msg.(type) {
+	case eventMsg:
+		// WSL's own stop comes after every distribution's: not yet, while
+		// one is still stopping.
+		if e.Event == "shutdown" {
+			return m, len(p.cut) > 0
+		}
+		// The distribution is stopping at the moment asked for: what it
+		// says after is not taken.
+		if p.cut[e.Distro] {
+			return m, true
+		}
+		at := p.clocks[e.Distro]
+		if e.Event == "line" && e.Kind == "done" {
+			// The time the step says it took.
+			took := time.Duration(e.Took * float64(time.Second))
+			if at+took > p.to {
+				// It is still running at the moment asked for.
+				p.cut[e.Distro] = true
+				return m, true
+			}
+			at += took
+			p.clocks[e.Distro] = at
+		}
+		// The distribution's own time, for the step this begins or ends.
+		m.now = m.run.started.Add(at)
+	case stopMsg:
+		if len(p.cut) > 0 {
+			// The stop goes on past the moment asked for: the frame is then.
+			m.now, p.frozen = m.run.started.Add(p.to), true
+			return m, true
+		}
+		// It ended before: the frame is its end, as Snapshot draws it.
+		m.now = m.run.started
+	}
 	return m, false
 }
 

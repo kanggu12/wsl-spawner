@@ -69,8 +69,9 @@ func TestAStopShowsEachStepsTimeAsABar(t *testing.T) {
 }
 
 func TestASnapshotPartWayIntoAStopShowsTheStepUnderWay(t *testing.T) {
-	// at is a frame of "s enter" that far into the stop, on a new demo PC.
-	at := func(d time.Duration) string {
+	// atKeys is a frame of keys that far into the stop they begin, on a
+	// new demo PC; at is the one of "s enter".
+	atKeys := func(keys string, d time.Duration) string {
 		a, _, done, err := demo.New(true)
 		if err != nil {
 			t.Fatal(err)
@@ -78,8 +79,9 @@ func TestASnapshotPartWayIntoAStopShowsTheStepUnderWay(t *testing.T) {
 		t.Cleanup(done)
 		i18n.Set(i18n.Lang("en"))
 		c := api.Client{Run: cli.InProcess(func() (*app.App, error) { return a, nil }), Lang: "en"}
-		return ansi.Strip(tui.SnapshotAt(c, 112, 18, true, tui.ParseKeys("s enter"), demo.Now, d))
+		return ansi.Strip(tui.SnapshotAt(c, 120, 24, true, tui.ParseKeys(keys), demo.Now, d))
 	}
+	at := func(d time.Duration) string { return atKeys("s enter", d) }
 	// Nine seconds in: the hook (2 s) has ended, Docker has run for 7.
 	f := at(9 * time.Second)
 	if row := lineWith(f, "hook 10-backup-db"); !strings.Contains(row, "✓") || !strings.HasSuffix(strings.TrimRight(row, " "), "2 s") {
@@ -93,8 +95,24 @@ func TestASnapshotPartWayIntoAStopShowsTheStepUnderWay(t *testing.T) {
 		t.Errorf("the stop ended in\n%s", f)
 	}
 	// Past its end, the frame is Snapshot's.
-	if got, want := at(time.Hour), ansi.Strip(frame(t, "en", 112, 18, "s enter")); got != want {
+	if got, want := at(time.Hour), ansi.Strip(frame(t, "en", 120, 24, "s enter")); got != want {
 		t.Errorf("an hour in:\n%s\nto its end:\n%s", got, want)
+	}
+	// Two distributions stop at the same time, each on its own clock: nine
+	// seconds in, Ubuntu's Docker has run for 7, and Work (1 s) has ended.
+	both := atKeys("S enter", 9*time.Second)
+	if row := lineWith(both, "docker: 3 containers"); !strings.Contains(row, " 7 s") || !strings.Contains(lineWith(both, "Stopping"), " 9 s") {
+		t.Errorf("two stops nine seconds in:\n%s", both)
+	}
+	if !strings.Contains(lineWith(both, "▌ Work"), "stopped") {
+		t.Errorf("Work has not ended nine seconds in:\n%s", both)
+	}
+	if got, want := atKeys("S enter", time.Minute), ansi.Strip(frame(t, "en", 120, 24, "S enter")); got != want {
+		t.Errorf("a minute in:\n%s\nto its end:\n%s", got, want)
+	}
+	// A key after the moment is not pressed: the frame stays at it.
+	if f := atKeys("s enter enter", 9*time.Second); !strings.Contains(f, "Stopping Ubuntu-24.04") {
+		t.Errorf("a key after the moment went on:\n%s", f)
 	}
 }
 
@@ -118,7 +136,7 @@ func TestItsStopsBarsShareOneScale(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(tui.PaneText(f), "Its stops · of 300 s") {
+	if !strings.Contains(tui.PaneText(f), "Its stops · against the 300 s limit") {
 		t.Errorf("no scale in the title of\n%s", f)
 	}
 }
@@ -139,5 +157,79 @@ func TestTheWideCheckSaysItsVerdictAndFitsInTwoColumns(t *testing.T) {
 	// Every group fits without scrolling, the last one too.
 	if !strings.Contains(f, "▪ Network") {
 		t.Errorf("the last group does not fit in\n%s", f)
+	}
+}
+
+func TestTheHistorysChoiceFollowsTheKeysBackFromItsEnd(t *testing.T) {
+	// Down past the oldest run, then one up: the next to oldest is chosen,
+	// not the oldest still.
+	keys := "h" + strings.Repeat(" down", 15) + " up"
+	if pane := tui.PaneText(ansi.Strip(frame(t, "en", 120, 30, keys))); !strings.Contains(pane, "2026-11-07 23:10") {
+		t.Errorf("one up from the end chose: %q", pane)
+	}
+	// The check and help scroll no further than their last line: one up
+	// from far past it moves at once.
+	for _, screen := range []string{"c", "?"} {
+		far := ansi.Strip(frame(t, "en", 80, 16, screen+strings.Repeat(" down", 40)))
+		back := ansi.Strip(frame(t, "en", 80, 16, screen+strings.Repeat(" down", 40)+" up"))
+		if far == back {
+			t.Errorf("%s: one up from far past the end does not move", screen)
+		}
+	}
+}
+
+func TestEveryWizardPageShowsWholeAtEverySize(t *testing.T) {
+	// No page is cut short: no "…" on any, and a page beside its rail shows
+	// every word the same page shows without the rail at that height.
+	word := regexp.MustCompile(`[A-Za-z가-힣][A-Za-z0-9가-힣'-]{2,}`)
+	words := func(f string) map[string]bool {
+		out := map[string]bool{}
+		for _, w := range word.FindAllString(ansi.Strip(f), -1) {
+			out[w] = true
+		}
+		return out
+	}
+	for _, lang := range []string{"en", "ko"} {
+		for name, keys := range wizardPages {
+			for _, h := range []int{16, 21, 22, 30} {
+				narrow, _ := wizardOn(t, lang, 79, h, keys)
+				want := words(narrow)
+				for _, w := range []int{80, 97, 98, 120} {
+					f, _ := wizardOn(t, lang, w, h, keys)
+					if strings.Contains(ansi.Strip(f), "…") {
+						t.Errorf("%s %s %dx%d is cut:\n%s", lang, name, w, h, ansi.Strip(f))
+						continue
+					}
+					got := words(f)
+					for x := range want {
+						if !got[x] {
+							t.Errorf("%s %s %dx%d lost %q:\n%s", lang, name, w, h, x, ansi.Strip(f))
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTheHistorysDistributionsShareTheirBars(t *testing.T) {
+	// The run of 11-11 22:36 stopped Ubuntu-24.04 (three steps) and Work
+	// (two, shorter names): their bars start in one column.
+	f := ansi.Strip(frame(t, "en", 120, 30, "h down"))
+	var starts []int
+	for _, l := range tui.RightPane(f) {
+		if i := strings.Index(l, "▪"); i >= 0 && strings.Contains(l, "✓") {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) < 5 {
+		t.Fatalf("not the run of two distributions:\n%s", f)
+	}
+	for _, i := range starts {
+		if i != starts[0] {
+			t.Errorf("bars start at %v:\n%s", starts, f)
+			break
+		}
 	}
 }

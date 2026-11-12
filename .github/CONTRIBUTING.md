@@ -19,8 +19,8 @@ The code sits in layers. Imports go down, never up; `internal/layers_test.go` fa
 | machine | `wsl`, `winapi`, `gpo`, `eventlog` | `wsl.exe`, Windows' calls, the local Group Policy's files and the policy's wait, Windows' event logs |
 | core | `version`, `plain` | the build's version; text read from a distribution made safe to show |
 
-Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, and setting up
-and taking out. What goes into a script is a number or a plain word, checked before it goes in; nothing read from a
+Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, setting up
+and taking out, and the read of the journal after a start that was cut. What goes into a script is a number or a plain word, checked before it goes in; nothing read from a
 distribution does. `engine/stop` alone runs a stop: the `stop` command, the screen through it, and the sign-out hook's
 `logoff` all go through it. Everything on Windows but WSL goes through the App's `PC`. The screen reads and changes
 nothing but through the commands' JSON (`api.Client`). [Internals](../docs/internals.md) has what runs where and why,
@@ -58,7 +58,7 @@ programs.
 ```sh
 make check          # gofmt, go vet and staticcheck for Linux and Windows, shellcheck, go test -race
 make test-windows   # from WSL: every package's tests again as Windows programs
-make fuzz           # the probe's reader, 30s; a failing input lands in testdata/fuzz
+make fuzz           # the probe's, the journal's and the event logs' readers, 30s each; a failing input lands in testdata/fuzz
 make vuln           # govulncheck, for Linux and Windows
 make demo           # the demo image from the work tree, opened in this terminal
 ```
@@ -84,8 +84,9 @@ A few tests hold what is hardest to see go wrong:
 No test reaches the PC it runs on. A test's App has a made-up PC whose every call fails unless the test gave it.
 `api.Exe`, `winapi.StartDetached`, `winapi.RunElevated`, `winapi.DeleteAfterExit` and the sign-in program's and PATH's
 calls refuse inside a test binary, so no test starts the program, `cmd.exe` or a window, or changes the PC; on
-Windows, an empty folder variable reaches no real folder in a test. The launcher's tests give it only fake programs
-without the execute bit: a real one built for another processor would put Windows' dialog on the desktop.
+Windows, an empty folder variable reaches no real folder in a test. The launcher's tests never start a program they
+give it: in a test binary `execve` refuses it, so a real one built for another processor cannot put Windows' dialog on
+the desktop.
 
 ## Make a change
 
@@ -94,7 +95,8 @@ without the execute bit: a real one built for another processor would put Window
   [how it works](../docs/how-it-works.md#a-stop).
 - **Something the probe reads**: a `KEY=VALUE` line in `probe.sh` and its field in `inside.Probe`; a key the Windows
   side does not know is skipped, so an older program reads a newer script.
-- **Words people see**: every word goes through `i18n.T`, in `internal/front/i18n/catalog.go`, in English and Korean.
+- **Words people see**: every word of the screen, setup and the overview goes through `i18n.T`, in
+  `internal/front/i18n/catalog.go`, in English and Korean; the other commands print English.
   `TestEveryWordTheScreenNamesIsInBothCatalogs` fails for a key missing from either.
 - **A finding in the check**: in `internal/engine/check`, with what to do about it, in both catalogs.
 

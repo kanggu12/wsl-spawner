@@ -391,7 +391,7 @@ func (w wizard) render() string {
 	}
 	t := w.th
 	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Muted).Render("  "+ui.Sep()+"  "+i18n.T("wiz.title"))
-	if w.width >= wideWizard {
+	if w.width >= wideWizard && w.height >= wideWizardRows {
 		return w.renderWide(m, head)
 	}
 	lines := []string{head, "", " " + w.progress(), ""}
@@ -414,9 +414,15 @@ func (w wizard) render() string {
 	return m.frame(lines)
 }
 
-// wideWizard is the width from which the wizard is a rail of its steps
-// and a panel beside it, as wsl-shrinker's is.
-const wideWizard = 80
+// wideWizard and wideWizardRows are the size from which the wizard is a
+// rail of its steps and a panel beside it, as wsl-shrinker's is: the rail
+// takes about 22 columns and the header two rows, which a smaller terminal
+// needs for the pages' words (the Mode page's longest row, the Welcome
+// page's paragraphs). TestEveryWizardPageShowsWholeAtEverySize holds it.
+const (
+	wideWizard     = 98
+	wideWizardRows = 22
+)
 
 // renderWide draws the wizard on a wide terminal: the step on the right of
 // the header, a bar of one segment per step under it, then the steps as a
@@ -455,6 +461,7 @@ func (w wizard) renderWide(m model, head string) string {
 		panel = append(panel, ui.Highlight(" "+l, t.Selected, pw))
 	}
 	rail := w.rail(railW)
+	cur := min(w.page, pages-1)
 	for i := 0; i < bodyH; i++ {
 		r, p := "", ui.Highlight("", t.Selected, pw)
 		if i < len(rail) {
@@ -463,7 +470,13 @@ func (w wizard) renderWide(m model, head string) string {
 		if i < len(panel) {
 			p = panel[i]
 		}
-		lines = append(lines, " "+ui.Fit(r, railW)+" "+p)
+		// The open step's row reaches the panel through the cell between:
+		// it is the panel's tab.
+		gap := " "
+		if i == cur {
+			gap = ui.Highlight("", t.Selected, 1)
+		}
+		lines = append(lines, " "+ui.Fit(r, railW)+gap+p)
 	}
 	lines = append(lines, "")
 	for len(lines) < w.height-1 {
@@ -642,8 +655,9 @@ func (w wizard) pageBody(keys [][2]string) ([]string, [][2]string) {
 			nameW = max(nameW, lipgloss.Width(d.name))
 		}
 		for i, d := range w.distros {
-			// The level as the main screen's table draws it.
-			dots, words := t.Level(d.want), ui.Fg(t.Ink).Render(i18n.T(levels[d.want]))
+			// The level as the main screen's table draws it, its empty
+			// squares in a color the panel does not swallow.
+			dots, words := t.LevelOn(d.want, t.Faint), ui.Fg(t.Ink).Render(i18n.T(levels[d.want]))
 			if !d.known && d.want == d.cur {
 				// Not read and not changed: what is in it is not guessed.
 				dots, words = ui.Fg(t.Faint).Render("–  "), ui.Fg(t.Muted).Render(i18n.T("choices.unknown"))

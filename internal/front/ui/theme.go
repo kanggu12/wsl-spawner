@@ -98,9 +98,13 @@ func (t Theme) KeyCap(key, label string) string {
 // Level draws a distribution's level as three squares, the way setup
 // chooses it: set up, kept running, started at sign-in, each holding the
 // one before. Those reached are in the tool's color, the rest the track.
-func (t Theme) Level(n int) string {
+func (t Theme) Level(n int) string { return t.LevelOn(n, t.Track) }
+
+// LevelOn is Level with its empty squares in empty: on a surface of its
+// own, as the wizard's panel, the track's color would all but vanish.
+func (t Theme) LevelOn(n int, empty color.Color) string {
 	n = max(0, min(3, n))
-	return Fg(t.Mark).Render(strings.Repeat(Block, n)) + Fg(t.Track).Render(strings.Repeat(Block, 3-n))
+	return Fg(t.Mark).Render(strings.Repeat(Block, n)) + Fg(empty).Render(strings.Repeat(Block, 3-n))
 }
 
 // Bar draws parts of a whole as one bar w cells wide: each part takes cells

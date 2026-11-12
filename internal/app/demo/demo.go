@@ -141,10 +141,11 @@ func New(fast bool) (*app.App, *World, func(), error) {
 			hooks: []string{"10-backup-db"},
 			// Set up before the demo began: yesterday's start, its stop as
 			// Windows signed out, and this morning's start, which brought
-			// db back and found web back by its policy.
+			// db back and found web and cache back by their policies: the
+			// three the containers' list says come back.
 			runs:      []run{{night.Add(-14 * time.Hour), 100}, {morning, 300}},
 			last:      &stopNote{run: 100, at: night.Add(41 * time.Second), took: 41, by: "signout"},
-			resumed:   []string{"docker c0ffee02 db started", "docker c0ffee01 web running"},
+			resumed:   []string{"docker c0ffee02 db started", "docker c0ffee01 web running", "docker c0ffee03 cache running"},
 			resumedAt: morning},
 		"Debian": {systemd: "running"},
 		"Work": {systemd: "degraded", failed: []string{"getty@tty1.service"},
@@ -201,7 +202,8 @@ func seedHistory(dir string) error {
 		start(day(1, 8, 57), 8),
 		{At: night, Took: 43, What: "stop", By: "signout", Shutdown: true,
 			Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "clean", Took: 41, Steps: steps(41, "clean")},
-				{Name: "Work", Result: "clean", Took: 3, Steps: []history.Step{{Step: "docker", Count: 1, Took: 2}, {Step: "sync", Took: 1}}}}},
+				// Work runs one container under Podman, as its next stop says.
+				{Name: "Work", Result: "clean", Took: 3, Steps: []history.Step{{Step: "podman", Count: 1, Took: 2}, {Step: "sync", Took: 1}}}}},
 		start(night.Add(10*time.Hour+22*time.Minute), 9),
 	} {
 		if err := s.Add(e); err != nil {

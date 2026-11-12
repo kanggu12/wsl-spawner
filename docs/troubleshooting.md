@@ -5,7 +5,7 @@ Start with `wsl-spawner check`: it reads everything a stop and a start stand on 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/trouble-dark.svg">
-  <img alt="What wsl-spawner says, and where Troubleshooting reads it. wsl-spawner check: its last stop ran out of time in a step (docker), read under A stop ran out of time; a step of its last stop failed (hook 10-backup-db), under A step failed; WSL was updated at 11-10 22:35, which ends every distribution, under The last start ended without its time; sign-out hook installed, but scripts after it run once WSL has stopped, under The sign-out hook did not run; kept running needs Windows programs, which do not run in it, under A distribution does not stay running. On the screen after a start: started, web brought back, db did not start, under A container did not come back. wsl-spawner set Work --managed: setting wsl-spawner up in Work: systemd does not run in it, under Set up fails. wsl-spawner in a WSL terminal: wsl-spawner.exe was not found next to this file or on the Windows PATH, under The screen in a WSL terminal." src="assets/trouble-light.svg">
+  <img alt="What wsl-spawner says, and where Troubleshooting reads it. wsl-spawner check: its last stop ran out of time in a step (2026-11-11 22:36), read under A stop ran out of time; a step of its last stop failed (2026-11-08 22:41), under A step failed; WSL was updated at 2026-11-10 22:35, which ends every distribution, under The last start ended without its time; sign-out hook installed, but scripts after it run once WSL has stopped, under The sign-out hook did not run; kept running needs Windows programs, which do not run in it, under A distribution does not stay running. On the screen after a start: started, web brought back, db did not start, under A container did not come back. wsl-spawner set Work --managed: setting wsl-spawner up in Work: systemd does not run in it, under Set up fails. wsl-spawner in a WSL terminal: wsl-spawner.exe was not found next to this file or on the Windows PATH, under The screen in a WSL terminal." src="assets/trouble-light.svg">
 </picture>
 
 ## A stop ran out of time
@@ -16,7 +16,8 @@ The stop ended `limit` (exit code 3, `!` on the screen): a step was still runnin
   `TimeoutStopSec` is what it waits. Docker or Podman: the container with the longest stop timeout sets the wait;
   `wsl-spawner check` lists those at or past the limit.
 - Raise the limit: `wsl-spawner setup --stop-limit 600`. The sign-out hook still has only what Windows waits for the
-  sign-out scripts (600 seconds by default); `check` says when the two do not fit.
+  sign-out scripts (600 seconds by default): run `wsl-spawner hook install` again, which raises that wait to fit the
+  new limit; `check` says when the two do not fit.
 
 ## A step failed
 
@@ -41,8 +42,8 @@ running `dockerd`, is Docker Desktop's or another engine's: it has no step.
 ## The last start ended without its time
 
 `check` says `✗ its last start ended without wsl-spawner's stop`: WSL or Windows ended the distribution with the few
-seconds WSL gives. Something stopped WSL without a sign-out: an update of WSL, `wsl --shutdown` or `wsl --terminate`
-typed by hand, a crash, or a sign-out with no hook. `wsl-spawner hook install` covers sign-out, shutdown and restart;
+seconds WSL gives. Something stopped WSL before wsl-spawner's stop could run: an update of WSL, `wsl --shutdown` or
+`wsl --terminate` typed by hand, a crash, or a sign-out, shutdown or restart with no hook installed. `wsl-spawner hook install` covers sign-out, shutdown and restart;
 stop it with `wsl-spawner stop` before stopping WSL by hand.
 
 Where it can tell, the line after says what it was, and when: Windows did not shut down cleanly (a crash, a hang or a
@@ -59,8 +60,9 @@ more. It is a hint, not proof: any program you run may write an event of Windows
   scripts and a domain's run after the hook: `hook status` lists the PowerShell ones.
 - `hook status` lists other copies' hooks. One that runs before this one stops WSL first: take it out with that copy's
   own `wsl-spawner hook remove`, or in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff.
-- `hook install` ended with exit code 3: the change is made, but Windows has not read it yet; it counts from your next
-  sign-in, and `gpupdate /target:user` has Windows read it now.
+- `hook install` ended with exit code 3: the change is made, but Windows has not read it yet, or Windows' wait for the
+  sign-out scripts stayed shorter than `stop_limit`, as a domain's policy may keep it. It says which. A change not read
+  yet counts from your next sign-in, and `gpupdate /target:user` has Windows read it now.
 - `wsl-spawnerw.exe` is gone, as a virus scanner may take it: `hook remove` and `uninstall` still take the hook out;
   `hook install` and `set --logon` need it: install wsl-spawner again.
 - The hook and the sign-in program need wsl-spawner on a fixed disk of this PC, not on a network share or in a
@@ -93,10 +95,29 @@ distribution only to read it.
 `read in part, as its look ran out of time`: what runs in the distribution was read up to its limit, often a container
 engine whose daemon does not answer. What was read stands; `docker info` inside says whether the daemon answers.
 
+## The install stops
+
+- **"could not download"**: the PC cannot reach github.com, or `WSL_SPAWNER_VERSION` names no release. Download the zip
+  for your processor and `checksums.txt` elsewhere, then install from the zip (`WSL_SPAWNER_ZIP`,
+  [Setup](setup.md#install)).
+- **"checksum mismatch"**: the download was damaged or changed on the way. Run the install again; report it if it
+  repeats.
+- **"is in use; close wsl-spawner"**: a wsl-spawner still runs, in another terminal. Close it, then run the install
+  again. Nothing was replaced.
+- **"running scripts is disabled on this system"**: a saved `install.ps1` was run as a file. The one-line install
+  (`irm ... | iex`) runs no file and is not stopped by the execution policy; or run the file with
+  `powershell -ExecutionPolicy Bypass -File install.ps1`.
+- **"Method invocation is supported only on core types in this language mode"**: PowerShell runs in ConstrainedLanguage
+  mode, as on company PCs under AppLocker or Windows Defender Application Control. Install from the zip by hand
+  ([Setup](setup.md#install)).
+
 ## The screen in a WSL terminal
 
 - `wsl-spawner.exe was not found`: the folder of the install is not on the Windows PATH WSL passes in. Open a new
-  terminal after the install, or check `appendWindowsPath` in `/etc/wsl.conf`.
+  terminal after the install. With `appendWindowsPath = false` in `/etc/wsl.conf`, link the launcher onto the
+  distribution's PATH, NAME being your Windows profile's folder:
+  `sudo ln -s /mnt/c/Users/NAME/AppData/Local/Programs/wsl-spawner/wsl-spawner /usr/local/bin/`. It finds
+  `wsl-spawner.exe` beside it.
 - `this distribution runs no Windows programs`: interop is off in that distribution.
 - The marks show as boxes in the Windows console's own window: `WSL_SPAWNER_SYMBOLS=plain`, or Windows Terminal.
 

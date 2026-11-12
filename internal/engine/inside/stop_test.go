@@ -730,12 +730,12 @@ func TestPodmansContainersAreStoppedEachWithItsTime(t *testing.T) {
 func TestTheUnitsListedStopFirstAndOnlyThoseThatRun(t *testing.T) {
 	files := proc("systemd")
 	files["run/systemd/system/"] = ""
-	files["etc/wsl-spawner/stop-units"] = "# the game server first\nminecraft.service\n\nnot-running.service\npostgresql.service"
+	files["etc/wsl-spawner/stop-units"] = "# the app first\nappworker.service\n\nnot-running.service\npostgresql.service"
 	root := tree(t, files)
 	dir := shtest.Tools(t)
-	asked := systemd(t, dir, "minecraft.service", "postgresql.service")
+	asked := systemd(t, dir, "appworker.service", "postgresql.service")
 	ls, _ := stopIn(t, dir, root, StopOptions{})
-	if got := lines(t, asked); !slices.Equal(got, []string{"stop minecraft.service postgresql.service"}) {
+	if got := lines(t, asked); !slices.Equal(got, []string{"stop appworker.service postgresql.service"}) {
 		t.Fatalf("systemctl asked %q", got)
 	}
 	if ls[0] != (StopLine{Kind: "plan", Step: StepUnits, Count: 2}) {
@@ -745,7 +745,7 @@ func TestTheUnitsListedStopFirstAndOnlyThoseThatRun(t *testing.T) {
 
 // windowsUnits is a stop-units file as an editor on Windows saves it, a
 // carriage return ending each line, with blanks around a name.
-const windowsUnits = "# the game server first\r\n  minecraft.service \r\n\r\nnot-running.service\t\r\npostgresql.service\r\n"
+const windowsUnits = "# the app first\r\n  appworker.service \r\n\r\nnot-running.service\t\r\npostgresql.service\r\n"
 
 func TestStopUnitsSavedOnWindowsAreReadByTheirNames(t *testing.T) {
 	files := proc("systemd")
@@ -754,9 +754,9 @@ func TestStopUnitsSavedOnWindowsAreReadByTheirNames(t *testing.T) {
 	root := tree(t, files)
 	dir := shtest.Tools(t)
 	// systemd knows the names only as they are, with nothing around them.
-	asked := systemd(t, dir, "minecraft.service", "postgresql.service")
+	asked := systemd(t, dir, "appworker.service", "postgresql.service")
 	ls, out := stopIn(t, dir, root, StopOptions{})
-	if got := lines(t, asked); !slices.Equal(got, []string{"stop minecraft.service postgresql.service"}) {
+	if got := lines(t, asked); !slices.Equal(got, []string{"stop appworker.service postgresql.service"}) {
 		t.Fatalf("systemctl asked %q\n%s", got, out)
 	}
 	if ls[0] != (StopLine{Kind: "plan", Step: StepUnits, Count: 2}) {

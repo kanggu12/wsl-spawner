@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kanggu12/wsl-spawner/internal/engine/history"
 	"github.com/kanggu12/wsl-spawner/internal/front/api"
 	"github.com/kanggu12/wsl-spawner/internal/front/i18n"
+	"github.com/kanggu12/wsl-spawner/internal/front/ui"
 )
 
 // longNames are made-up container names as long as real ones run, 15 to 30
@@ -38,7 +41,7 @@ func TestLongContainerNamesKeepTheirStateAndWordsWhole(t *testing.T) {
 	for _, setUp := range []bool{false, true} {
 		// The words on coming back each row ends with.
 		words := map[bool][]string{false: {"won't be back", "back by its policy"}, true: {"back by wsl-spawner", "back by its policy"}}[setUp]
-		for _, w := range []int{100, 120, 140, 200} {
+		for _, w := range []int{100, 119, 120, 140, 200} {
 			f := withLongNames(w, 34, setUp)
 			for i, n := range longNames {
 				// The row is the one with the name's end: a name cut short
@@ -48,12 +51,15 @@ func TestLongContainerNamesKeepTheirStateAndWordsWhole(t *testing.T) {
 					t.Errorf("set up %v, %d: no row ends %q in\n%s", setUp, w, n[len(n)-8:], f)
 					continue
 				}
-				if !strings.Contains(row, "running  "+words[i%2]) {
+				// The words stand whole at the row's end: after the state, or,
+				// beside the table, in its place, as they say it runs.
+				if !strings.HasSuffix(strings.TrimRight(row, " "), "  "+words[i%2]) {
 					t.Errorf("set up %v, %d: the state or its words cut in %q", setUp, w, row)
 				}
-				// The names stand whole where the details have room for them:
-				// from 120 columns on one; beside the table, from 140.
-				if w >= 140 && !strings.Contains(row, n) {
+				// The names stand whole from 119 columns: on one column, and
+				// beside the table but at 120 columns, where only the one of 27
+				// letters is cut in its middle, keeping 20 of them.
+				if w >= 119 && !strings.Contains(row, n) && (w != 120 || len(n) < 27) {
 					t.Errorf("set up %v, %d: %s cut in %q", setUp, w, n, row)
 				}
 			}
@@ -306,5 +312,123 @@ func TestTheHistoryNamesANoteThatCouldNotBeWritten(t *testing.T) {
 	}
 	if got := stepWords(step{key: "record"}); got != "notes in /var/lib/wsl-spawner" {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestAStepUnderWayGrowsAgainstAtLeastAMinute(t *testing.T) {
+	// The step under way is not the bar's whole scale: against the longest
+	// step alone it would be a full bar from its first second.
+	m := newModel(context.Background(), api.Client{}, true)
+	now := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	steps := []step{{key: "hook:10-backup-db", state: "done", took: 2 * time.Second}, {key: "docker", state: "run", since: now.Add(-7 * time.Second)}}
+	if got := m.stepScale(steps, now); got != time.Minute {
+		t.Errorf("scale %v with a step 7 s under way", got)
+	}
+	// A step past a minute is the scale.
+	steps[1].since = now.Add(-90 * time.Second)
+	if got := m.stepScale(steps, now); got != 90*time.Second {
+		t.Errorf("scale %v with a step 90 s under way", got)
+	}
+}
+
+func TestAStepOutOfItsTimeIsSaidAlikeEverywhere(t *testing.T) {
+	// 124 and 137 are a step that ran out of its time, TERM then KILL, as
+	// the stop screen says it: no exit code of its own in its name.
+	for _, code := range []int{124, 137} {
+		s := history.Step{Step: "docker", Count: 3, Took: 300, Code: code}
+		if w := historyStepWords(s); strings.Contains(w, "exit") {
+			t.Errorf("%d: %q", code, w)
+		}
+		if w := stepName(history.Step{Step: "hook", Hook: "20-db", Took: 300, Code: code}); strings.Contains(w, "exit") {
+			t.Errorf("%d: %q", code, w)
+		}
+	}
+}
+
+func TestAStopsErrorIsSaidWholeBesideAnotherBlock(t *testing.T) {
+	// Two distributions side by side, one of them ended in an error: its
+	// words stand whole under its name, not cut to half the screen.
+	m := newModel(context.Background(), api.Client{}, true)
+	m.width, m.height, m.loaded, m.mode = 130, 24, true, modeRun
+	m.st = api.Status{WSL: "3.0.5.0", StopLimit: 300}
+	now := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	m.now = now
+	err := "running the stop script in Ubuntu-24.04: WSL did not answer in time"
+	m.run = &runState{act: action{kind: "stop", names: []string{"Ubuntu-24.04", "Work"}}, started: now, ended: now, done: true,
+		steps:   map[string][]step{"Ubuntu-24.04": nil, "Work": {{key: "sync", state: "done", took: time.Second}}},
+		results: map[string]string{"Ubuntu-24.04": "error", "Work": "clean"},
+		errs:    map[string]string{"Ubuntu-24.04": err}, back: map[string][]api.CameBack{}, took: map[string]time.Duration{}}
+	f := ansi.Strip(m.View().Content)
+	// The left block's words, each line up to the right block's edge: the
+	// error's words in order, wherever its lines broke.
+	var left []string
+	for _, l := range strings.Split(f, "\n") {
+		if i := strings.Index(l, "▌"); i >= 0 {
+			if j := strings.Index(l[i+len("▌"):], "▌"); j >= 0 {
+				l = l[:i+len("▌")+j]
+			}
+		}
+		// The block's edge is no word.
+		left = append(left, strings.ReplaceAll(l, "▌", " "))
+	}
+	if !strings.Contains(strings.Join(strings.Fields(strings.Join(left, " ")), " "), strings.Join(strings.Fields(err), " ")) {
+		t.Errorf("the error is not whole in\n%s", f)
+	}
+	if strings.Contains(f, "…") {
+		t.Errorf("cut short:\n%s", f)
+	}
+}
+
+func TestTheContainerMeterIsFullOnlyWhenEveryOneRuns(t *testing.T) {
+	m := newModel(context.Background(), api.Client{}, true)
+	for _, c := range []struct{ running, all, lit int }{{9, 10, 4}, {19, 20, 4}, {10, 10, 5}, {1, 20, 1}, {0, 3, 0}, {3, 4, 3}} {
+		meter := m.containerMeter(c.running, c.all)
+		// The lit squares are the running color's: count them by color.
+		lit := strings.Count(meter, ui.Fg(m.th.Cat[ui.CatRunning]).Render(strings.Repeat(ui.Block, c.lit)))
+		if c.lit > 0 && lit != 1 || strings.Count(ansi.Strip(meter), ui.Block) != min(c.all, 5) {
+			t.Errorf("%d of %d: %q", c.running, c.all, meter)
+		}
+	}
+}
+
+func TestALineBreaksNeitherANumberFromItsUnitNorBeforeASeparator(t *testing.T) {
+	st := lipgloss.NewStyle()
+	for _, w := range []int{40, 42, 44, 46} {
+		got := ansi.Strip(strings.Join(wrapPieces("  ▪ ", "    ", w, piece{"docker: 3 containers, the longest stop 60 s", st, false}), "\n"))
+		if strings.HasSuffix(got, "\n    s") || !strings.Contains(got, "60 s") {
+			t.Errorf("%d: %q", w, got)
+		}
+		got = ansi.Strip(strings.Join(wrapPieces("  ↻ ", "    ", w, piece{"db brought back, web back by its policy", st, false}, piece{" · 11-12 08:58", st, true}), "\n"))
+		for _, l := range strings.Split(got, "\n")[1:] {
+			if strings.HasPrefix(strings.TrimLeft(l, " "), "·") {
+				t.Errorf("%d: a line starts with the separator: %q", w, got)
+			}
+		}
+	}
+}
+
+func TestTheLastStopShowsItsOwnStepsNotANewerStops(t *testing.T) {
+	// The distribution's own record names the stop of 11-10 22:00; the
+	// history has a newer stop of it, 11-12, of other steps. The pane's
+	// steps are 11-10's, or none, never 11-12's under 11-10's line.
+	old := time.Date(2026, 11, 10, 22, 0, 0, 0, time.Local)
+	newer := time.Date(2026, 11, 12, 22, 0, 0, 0, time.Local)
+	d := api.Distro{Name: "Ubuntu-24.04", Running: true, Kind: "set-up", Version: 2, Probe: &api.Probe{SetUp: true, Systemd: "running",
+		LastEnd: api.End{How: "clean"}, LastStop: &api.LastStop{At: old.Add(20 * time.Second), Took: 21, Result: "clean", By: "signout"}}}
+	m := mainWith(140, 40, 0, d)
+	m.hist = []history.Entry{
+		{At: old, Took: 22, What: "stop", By: "signout", Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "clean", Took: 21,
+			Steps: []history.Step{{Step: "hook", Hook: "10-backup-db", Took: 2}, {Step: "docker", Count: 3, Took: 18}}}}},
+		{At: newer, Took: 300, What: "stop", By: "hand", Distros: []history.Distro{{Name: "Ubuntu-24.04", Result: "limit", Took: 299,
+			Steps: []history.Step{{Step: "docker", Count: 9, Took: 299, Code: 124}}}}},
+	}
+	pane := PaneText(ansi.Strip(m.View().Content))
+	if !strings.Contains(pane, "hook 10-backup-db") || strings.Contains(pane, "docker: 9 containers") {
+		t.Errorf("the last stop's steps: %q", pane)
+	}
+	// With no stop of that moment in the history, no steps at all.
+	m.hist = m.hist[1:]
+	if pane := PaneText(ansi.Strip(m.View().Content)); strings.Contains(pane, "docker: 9 containers") {
+		t.Errorf("another stop's steps: %q", pane)
 	}
 }

@@ -263,7 +263,9 @@ func TestALongLineWrapsLeftAndLeavesTheContainersTheirRoom(t *testing.T) {
 	// it wraps in the left column, and the containers keep the room for
 	// their images, as before it.
 	f := ansi.Strip(frame(t, "en", 160, 40, "s enter enter t enter enter"))
-	if !strings.Contains(lineWith(f, "▪ web "), "nginx:1.27") || !strings.Contains(tui.PaneText(f), "its policy · 11-12 09:30") {
+	// The time after them, with its dot, or on a line of its own without.
+	pane := tui.PaneText(f)
+	if !strings.Contains(lineWith(f, "▪ web "), "nginx:1.27") || !strings.Contains(pane, "its policy · 11-12 09:30") && !strings.Contains(pane, "its policy 11-12 09:30") {
 		t.Errorf("%s", f)
 	}
 }
@@ -612,7 +614,7 @@ func TestTheCheckAndTheMainScreenAgreeOnALastStop(t *testing.T) {
 	// Work is not set up: nothing in it notes how its starts end, but the
 	// history holds wsl-spawner's clean stop of it, which the main screen
 	// shows. The check says both, and nowhere that it is not known. In one
-	// column, under 112 cells, each sentence keeps to a line.
+	// column, under 120 cells, each sentence keeps to a line.
 	f := ansi.Strip(frame(t, "en", 104, 60, "c"))
 	for _, want := range []string{"nothing in it notes how its starts end", "the history holds wsl-spawner's last stop of it: clean (2026-11-11 22:36)"} {
 		if !strings.Contains(f, want) {

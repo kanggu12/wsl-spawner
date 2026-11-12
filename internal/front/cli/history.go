@@ -113,7 +113,9 @@ func lateStep(d history.Distro) string {
 		// A file of the stop's own that could not be written.
 		name = "notes in /var/lib/wsl-spawner"
 	}
-	if s.Code != 124 {
+	// 124 and 137 are a step out of its time (TERM, then KILL), as the stop
+	// says them, not an exit code of its own.
+	if s.Code != 124 && s.Code != 137 {
 		name += fmt.Sprintf(", exit %d", s.Code)
 	}
 	return ": " + name

@@ -133,9 +133,9 @@ type runState struct {
 // model is the screen's state.
 type model struct {
 	ctx context.Context
-	// playTo is, in a snapshot, how far into a stop its frame is drawn: 0
-	// plays the stop to its end.
-	playTo time.Duration
+	// play is, in a snapshot, how far into a stop its frame is drawn, and
+	// the clocks that measure it; its to is 0 to play the stop to its end.
+	play *playback
 	// wordOnly has the table say a last stop in its word alone, its time
 	// left to the pane beside it: set for the left pane of a wide screen.
 	wordOnly bool
@@ -386,15 +386,17 @@ func (m model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "backspace", "enter":
 			m.mode, m.scroll = modeMain, 0
 		case "down", "j":
-			m.scroll++
+			m.scroll = min(m.scroll+1, m.scrollMax())
 		case "up", "k":
-			m.scroll = max(0, m.scroll-1)
+			m.scroll = max(0, min(m.scroll, m.scrollMax())-1)
 		case "pgdown", "space":
-			m.scroll += max(1, m.height-6)
+			m.scroll = min(m.scroll+max(1, m.height-6), m.scrollMax())
 		case "pgup":
-			m.scroll = max(0, m.scroll-max(1, m.height-6))
+			m.scroll = max(0, min(m.scroll, m.scrollMax())-max(1, m.height-6))
 		case "home":
 			m.scroll = 0
+		case "end":
+			m.scroll = m.scrollMax()
 		case "r":
 			if m.mode == modeCheck && !m.checking {
 				m.checking = true

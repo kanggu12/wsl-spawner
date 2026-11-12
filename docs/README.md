@@ -15,7 +15,7 @@
 | [Settings](settings.md) | `config.toml`, the hooks and units a distribution stops first, the files wsl-spawner writes |
 | [Troubleshooting](troubleshooting.md) | what each finding means: a stop that runs out of time, a cut start, a container that does not come back, a hook that does not run |
 | [Internals](internals.md) | what runs where, the layers, what it reads and changes, the decisions, the tests and CI |
-| [Third-party notices](THIRD_PARTY_NOTICES.md) | the libraries wsl-spawner is built from, and its logo's font, with their licenses |
+| [Third-party notices](THIRD_PARTY_NOTICES.md) | the libraries wsl-spawner is built from, and the font of its logo and figures, with their licenses |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/day-dark.svg">

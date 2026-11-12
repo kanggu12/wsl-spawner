@@ -309,6 +309,9 @@ func TestWhatOpensTheScreenHere(t *testing.T) {
 	for args, want := range map[string]bool{
 		"": true, "tui": true, "--lang ko": true, "--theme light tui": true, "--lang=ko": true,
 		"status": false, "stop Ubuntu": false, "--lang ko status": false, "--help": false, "tui --help": false,
+		// The wizard is drawn here too; setup with a flag writes a setting,
+		// which the Windows program does.
+		"setup": true, "--lang ko setup": true, "setup --mode cli": false, "setup --stop-limit 600": false, "setup --help": false,
 	} {
 		if got := screenAsked(strings.Fields(args)); got != want {
 			t.Errorf("%q: %v", args, got)

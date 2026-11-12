@@ -13,7 +13,7 @@ packages leave it, is not asked anything, as asking would start it, and reads as
   <img alt="A stop, step by step. 1, the containers to bring back are noted first, so a stop cut short still brings them back. 2, your hooks in /etc/wsl-spawner/pre-stop.d run in the order of their names. 3, the systemd units /etc/wsl-spawner/stop-units names stop, ordered by their dependencies. 4, Docker's daemon stops every container itself, each with its own stop timeout, and keeps their restart policies. 5, Podman's containers stop, each with its own timeout. 6, the journal and the disk are synced and the stop's record says how it ended: clean, limit or failed. All the steps share stop_limit, 300 seconds by default; then WSL ends what is left." src="assets/steps-light.svg">
 </picture>
 
-`wsl-spawner stop NAME`, `S` on the screen, and the sign-out hook all stop a distribution the same way. A script runs
+`wsl-spawner stop NAME`, `s` and `S` on the screen, and the sign-out hook all stop a distribution the same way. A script runs
 inside it as root, and says each step as it goes. One stop runs in a distribution at a time: a second one, as the
 sign-out hook's while a stop asked by hand is at work, finds the first's lock in `/run`, changes nothing and leaves the
 distribution to it; with `--shutdown`, WSL's own stop waits for that first stop to end.
@@ -60,7 +60,7 @@ with no console, which the terminal's end does not end, and the history says how
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/compare-dark.svg">
-  <img alt="How a stop by wsl-spawner compares with wsl --shutdown and with docker stop. wsl --shutdown gives no service its time to stop and cuts containers mid-write; they come back only by their restart policy; it does not run at sign-out and keeps no record. docker stop gives only containers their time, marks them stopped by hand so their policy no longer starts them, does not run at sign-out and keeps no record. wsl-spawner gives each service and container its own time, keeps their policies, brings back the containers you choose, runs last as Windows signs out, and says how each stop went in history and check." src="assets/compare-light.svg">
+  <img alt="How a stop by wsl-spawner compares with wsl --shutdown and with docker stop. wsl --shutdown gives no service its time to stop and cuts containers mid-write; they come back only by their restart policy; it does not run at sign-out and keeps no record. docker stop gives only containers their time and marks them stopped by hand, so one with unless-stopped no longer starts and only those with always come back; it does not run at sign-out and keeps no record. wsl-spawner gives each service and container its own time, keeps their policies, brings back the containers you choose, runs last as Windows signs out, and says how each stop went in history and check." src="assets/compare-light.svg">
 </picture>
 
 A container stopped by `docker stop` is marked as stopped by hand, and `unless-stopped` no longer starts it when Docker
@@ -99,10 +99,10 @@ The hook, which is in a policy for every user of the PC and runs as whoever sign
 also needs wsl-spawner where no one but you, the system and the administrators can write: it checks the owner and the
 access list of the program, its folder and every folder above, and refuses to install otherwise, naming who may change
 what. The install script's own folder, under your profile, is such a place; a folder made under a drive's root, such as
-`C:\tools`, usually lets every user write in it. A drive's root itself is not counted for being deleted: no one deletes
-it. Links and junctions on the way are followed to where they lead, and checked there too. For a standard user, whom
-Windows would have run the program with an administrator's rights, only the administrators may write there: an
-administrator's install under Program Files ([For a standard user](setup.md#for-a-standard-user)). `check` says it of
+`C:\tools`, usually lets every user write in it. Who may delete a drive's root is not counted, as a root is never
+deleted. Links and junctions on the way are followed to where they lead, and checked there too. A standard user's
+hook would run, as an administrator signs out, a program that user could change, so only the administrators may write
+there: an administrator's install under Program Files ([For a standard user](setup.md#for-a-standard-user)). `check` says it of
 a hook already installed, with that hook's own way out.
 
 Another copy's hook, one an install moved elsewhere or a second install left, is told apart. `hook install`,
@@ -125,10 +125,10 @@ how far the distribution's clock was off it as it was read. Windows' event logs 
 | Windows shut down or restarted | User32 1074, EventLog 6006, Kernel-Power 109, Kernel-General 13 | ended about then, asked to power off or not |
 | You signed out | Winlogon 7002, yours | ended about then, asked to power off or not |
 
-The first that fits is what ended it; none, and it was stopped outside wsl-spawner (`wsl --shutdown`, `wsl --terminate`,
+The earliest that fits is what ended it; none, and it was stopped outside wsl-spawner (`wsl --shutdown`, `wsl --terminate`,
 or WSL itself). A Windows event alone does not say it: a start may end long before Windows next shuts down. The logs are
 read only, as any user signed in may, within a few seconds; one that cannot be read leaves it unsaid. Updates are read
-for the first minutes after the start ended, as other programs' installs fill the log. What it says is a hint, not
+for the first 20 minutes after the start ended, as other programs' installs fill the log. What it says is a hint, not
 proof: any program a signed-in user runs may write an event of Windows Installer's.
 
 ## The start

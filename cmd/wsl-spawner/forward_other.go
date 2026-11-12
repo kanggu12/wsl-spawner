@@ -204,8 +204,10 @@ func appendWSLENV(cur, entry string) string {
 // valueFlags are the flags that take a value as the next word.
 var valueFlags = []string{"--lang", "--theme", "--keys", "--snapshot", "--at"}
 
-// screenAsked reports whether a command line opens the screen: no command,
-// or tui, with only flags around it.
+// screenAsked reports whether a command line opens the screen or the
+// wizard, which this terminal draws: no command, tui, or setup with no
+// flag of its own, the screen's flags around them. With a flag, setup
+// writes a setting, which wsl-spawner.exe does.
 func screenAsked(args []string) bool {
 	// Help is answered by the program, whatever else is asked.
 	if slices.Contains(args, "--help") || slices.Contains(args, "-h") {
@@ -219,7 +221,8 @@ func screenAsked(args []string) bool {
 			continue
 		}
 		if !strings.HasPrefix(a, "-") {
-			return a == "tui"
+			// setup alone: every word after it would be a setting to write.
+			return a == "tui" || a == "setup" && i == len(args)-1
 		}
 	}
 	return true

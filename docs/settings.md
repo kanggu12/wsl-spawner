@@ -42,12 +42,12 @@ What a stop does first, set by you, inside the distribution:
 
 - **`/etc/wsl-spawner/pre-stop.d/`**: programs run before anything else stops, as root, in the order of their names,
   each with the time left. A script needs its execute bit and its first line (`#!/bin/sh`). Exit code 0 is a step done;
-  another code makes the stop end as `failed`, and the other steps still run. For example, a game server's save:
+  another code makes the stop end as `failed`, and the other steps still run. For example, a database's dump:
 
   ```sh
   #!/bin/sh
-  # /etc/wsl-spawner/pre-stop.d/10-save-world
-  docker exec minecraft rcon-cli save-all flush
+  # /etc/wsl-spawner/pre-stop.d/10-backup-db
+  docker exec db pg_dump -U app -f /backups/before-stop.sql app
   ```
 
 - **`/etc/wsl-spawner/stop-units`**: systemd units to stop before the containers, one name a line, a line that starts
@@ -55,8 +55,8 @@ What a stop does first, set by you, inside the distribution:
   Each gets its own `TimeoutStopSec`:
 
   ```text
-  # the game server first
-  minecraft.service
+  # the app first, then its database
+  app.service
   postgresql.service
   ```
 

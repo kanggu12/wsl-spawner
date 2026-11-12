@@ -387,7 +387,7 @@ func TestProbeReadsWhatWslSpawnerKeeps(t *testing.T) {
 	files["var/lib/wsl-spawner/runs"] = "1700000000 0f0e0d0c-0b0a-4908-8706-050403020100@100\n1700000500 0f0e0d0c-0b0a-4908-8706-050403020100@4242\n"
 	files["var/lib/wsl-spawner/last-stop"] = "run=0f0e0d0c-0b0a-4908-8706-050403020100@100\nat=1700000400\ntook=41\nresult=clean\nby=signout\n"
 	files["var/lib/wsl-spawner/resume"] = "docker bbb222 db\n"
-	files["etc/wsl-spawner/stop-units"] = "# first\nminecraft.service\n\npostgresql.service"
+	files["etc/wsl-spawner/stop-units"] = "# first\nappworker.service\n\npostgresql.service"
 	root := tree(t, files)
 	// The README is not a program: only what can run is a hook.
 	if err := os.Chmod(filepath.Join(root, "etc/wsl-spawner/pre-stop.d/README"), 0o644); err != nil {
@@ -395,7 +395,7 @@ func TestProbeReadsWhatWslSpawnerKeeps(t *testing.T) {
 	}
 	_, p := probe(t, shtest.Tools(t), root)
 	if !p.SetUp() || !slices.Equal(p.Hooks, []string{"10-save-world"}) || len(p.Runs) != 2 ||
-		!slices.Equal(p.StopUnits, []string{"minecraft.service", "postgresql.service"}) {
+		!slices.Equal(p.StopUnits, []string{"appworker.service", "postgresql.service"}) {
 		t.Fatalf("%+v", p)
 	}
 	if s := p.LastStop; s == nil || s.Took != 41*time.Second || s.By != "signout" || s.At.Unix() != 1700000400 {
@@ -416,7 +416,7 @@ func TestProbeReadsStopUnitsSavedOnWindowsByTheirNames(t *testing.T) {
 	files := proc("systemd")
 	files["etc/wsl-spawner/stop-units"] = windowsUnits
 	_, p := probe(t, shtest.Tools(t), tree(t, files))
-	if want := []string{"minecraft.service", "not-running.service", "postgresql.service"}; !slices.Equal(p.StopUnits, want) {
+	if want := []string{"appworker.service", "not-running.service", "postgresql.service"}; !slices.Equal(p.StopUnits, want) {
 		t.Fatalf("%q", p.StopUnits)
 	}
 }
@@ -430,11 +430,11 @@ func TestProbeSaysHowEachStopUnitStands(t *testing.T) {
 	shtest.Stub(t, dir, "systemctl", `case "$*" in
 is-system-running) echo running ;;
 'list-units --failed --plain --no-legend') ;;
-'show -p LoadState --value minecraft.service' | 'show -p LoadState --value postgresql.service') echo loaded ;;
-'show -p LoadState --value minecarft.service') echo not-found ;;
+'show -p LoadState --value appworker.service' | 'show -p LoadState --value postgresql.service') echo loaded ;;
+'show -p LoadState --value appwroker.service') echo not-found ;;
 'show -p LoadState --value postgresql.service # db') echo 'Invalid unit name' >&2; exit 1 ;;
 'show -p LoadState --value '*) echo not-found ;;
-'is-active minecraft.service') echo active ;;
+'is-active appworker.service') echo active ;;
 'is-active postgresql.service') echo activating; exit 3 ;;
 'is-active '*) echo inactive; exit 4 ;;
 'is-enabled '*) echo disabled; exit 1 ;;
@@ -442,16 +442,16 @@ is-system-running) echo running ;;
 esac`)
 	files := proc("systemd")
 	files["run/systemd/system/"] = ""
-	files["etc/wsl-spawner/stop-units"] = "minecraft.service\npostgresql.service\nminecarft.service\npostgresql.service # db\n"
+	files["etc/wsl-spawner/stop-units"] = "appworker.service\npostgresql.service\nappwroker.service\npostgresql.service # db\n"
 	out, p := probe(t, dir, tree(t, files))
-	want := []string{"minecraft.service", "postgresql.service", "minecarft.service", "postgresql.service # db"}
+	want := []string{"appworker.service", "postgresql.service", "appwroker.service", "postgresql.service # db"}
 	if !slices.Equal(p.StopUnits, want) {
 		t.Fatalf("stop units %q\n%s", p.StopUnits, out)
 	}
 	for name, st := range map[string]StopUnitState{
-		"minecraft.service":       {Load: "loaded", Active: "active"},
+		"appworker.service":       {Load: "loaded", Active: "active"},
 		"postgresql.service":      {Load: "loaded", Active: "activating"},
-		"minecarft.service":       {Load: "not-found", Active: "inactive"},
+		"appwroker.service":       {Load: "not-found", Active: "inactive"},
 		"postgresql.service # db": {Load: "not-found", Active: "inactive"},
 	} {
 		if got := p.StopUnitStates[name]; got != st {

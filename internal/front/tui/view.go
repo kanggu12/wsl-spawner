@@ -234,7 +234,9 @@ func (m model) mainView() string {
 
 // wideMin is the width from which the main screen is two panes: under it
 // the selected distribution goes under the table, as on a narrow terminal.
-const wideMin = 112
+// Under 120 columns, Windows Terminal's own width, the table would lose a
+// column and the details their containers' names.
+const wideMin = 120
 
 // leftMin and leftShare bound the left pane: the table at its own width, at
 // least leftMin cells, at most leftShare of the screen, so the right pane
@@ -395,6 +397,13 @@ func (m model) lastStopRows(d api.Distro, w int) []string {
 	if !ok || (!fromHistory(how) && endCat(how) == ui.CatCut) {
 		return rows
 	}
+	// Said from the distribution's own record: the history's stop of that
+	// moment, or no steps, rather than another stop's.
+	if !fromHistory(how) && d.Probe != nil && d.Probe.LastStop != nil {
+		if _, r, ok = m.stopAt(d.Name, d.Probe.LastStop.At); !ok {
+			return rows
+		}
+	}
 	steps := m.stepRows(r, w)
 	if len(steps) == 0 {
 		return rows
@@ -416,45 +425,64 @@ func (m model) endLines(d api.Distro, w int) []string {
 	return all[:max(0, len(all)-len(back))]
 }
 
+// stepCols are the columns of stops' step rows that are shown together:
+// the widest name and seconds, and the scale, the longest step but at
+// least stepScaleMin. One set for every distribution of a run lines their
+// bars up on one scale.
+type stepCols struct {
+	nameW, secW int
+	scale       float64
+}
+
+// stepColsOf are the columns that fit every step of ds.
+func stepColsOf(ds ...history.Distro) stepCols {
+	c := stepCols{scale: stepScaleMin.Seconds()}
+	for _, d := range ds {
+		for _, s := range d.Steps {
+			c.nameW = max(c.nameW, lipgloss.Width(historyStepWords(s)))
+			c.secW = max(c.secW, lipgloss.Width(elapsed(time.Duration(s.Took*float64(time.Second)))))
+			c.scale = max(c.scale, s.Took)
+		}
+	}
+	return c
+}
+
 // stepRows are the steps of a stop, as the history keeps them, in w cells:
-// a mark for how each ended, its name, a bar of its time against the
-// longest step's, and its seconds. A pane too narrow for a bar has none.
+// a mark for how each ended, its name, a bar of its time, and its seconds.
+// A pane too narrow for a bar has none.
 func (m model) stepRows(r history.Distro, w int) []string {
+	return m.stepRowsWith(r, w, stepColsOf(r))
+}
+
+// stepRowsWith is stepRows in columns c, shared with the other
+// distributions shown beside it.
+func (m model) stepRowsWith(r history.Distro, w int, c stepCols) []string {
 	t := m.th
 	if len(r.Steps) == 0 {
 		return nil
 	}
-	names := make([]string, len(r.Steps))
-	secs := make([]string, len(r.Steps))
-	nameW, secW, longest := 0, 0, 0.0
-	for i, s := range r.Steps {
-		names[i] = historyStepWords(s)
-		secs[i] = elapsed(time.Duration(s.Took * float64(time.Second)))
-		nameW = max(nameW, lipgloss.Width(names[i]))
-		secW = max(secW, lipgloss.Width(secs[i]))
-		longest = max(longest, s.Took)
-	}
 	// Four cells in, under the result's words; the mark and a space; the
 	// name; two spaces; the bar; two spaces; the seconds, right-aligned.
 	// The names first, whole where they fit: the bar takes what is left.
-	nameW = min(nameW, max(12, w-6-2-2-secW))
-	barW := min(24, w-6-nameW-2-2-secW)
+	nameW := min(c.nameW, max(12, w-6-2-2-c.secW))
+	barW := min(24, w-6-nameW-2-2-c.secW)
 	var out []string
-	for i, s := range r.Steps {
+	for _, s := range r.Steps {
 		color, mark := t.Cat[ui.CatClean], "✓"
 		switch {
-		case s.Code == 124:
-			// Ran out of its time.
+		case s.Code == 124 || s.Code == 137:
+			// Ran out of its time, as the stop screen said it: TERM's
+			// timeout, or the KILL five seconds after.
 			color, mark = t.Cat[ui.CatWarn], "!"
 		case s.Code != 0:
 			color, mark = t.Cat[ui.CatCut], "✗"
 		}
-		row := "    " + ui.Fg(color).Render(mark) + " " + ui.Fit(ui.Fg(t.Ink).Render(names[i]), nameW)
+		row := "    " + ui.Fg(color).Render(mark) + " " + ui.Fit(ui.Fg(t.Ink).Render(historyStepWords(s)), nameW)
 		if barW >= 6 {
 			// A step that took no measurable time keeps its track.
-			row += "  " + t.Bar(barW, int64(longest*1000), ui.Part{Value: int64(s.Took * 1000), Color: color})
+			row += "  " + t.Bar(barW, int64(c.scale*1000), ui.Part{Value: int64(s.Took * 1000), Color: color})
 		}
-		row += "  " + ui.Fg(t.Muted).Render(ui.FitRight(secs[i], secW))
+		row += "  " + ui.Fg(t.Muted).Render(ui.FitRight(elapsed(time.Duration(s.Took*float64(time.Second))), c.secW))
 		out = append(out, row)
 	}
 	return out
@@ -474,7 +502,8 @@ func historyStepWords(s history.Step) string {
 		// The hook by its file, the others by name, the exit code with them.
 		return stepName(s)
 	}
-	if s.Code != 124 && s.Code != 0 {
+	// 124 and 137 are a step out of its time (TERM, then KILL), not a code.
+	if s.Code != 124 && s.Code != 137 && s.Code != 0 {
 		words += i18n.T("stepname.exit", s.Code)
 	}
 	return words
@@ -846,8 +875,14 @@ func (m model) containerMeter(running, all int) string {
 	}
 	n := min(all, 5)
 	lit := int(math.Round(float64(running) / float64(all) * float64(n)))
-	if running > 0 && lit == 0 {
+	switch {
+	case running > 0 && lit == 0:
+		// One running among many still lights a square.
 		lit = 1
+	case running < all && lit == n:
+		// One down among many still leaves a square dark: a full meter
+		// says every one runs.
+		lit = n - 1
 	}
 	return ui.Fg(t.Cat[ui.CatRunning]).Render(strings.Repeat(ui.Block, lit)) + ui.Fg(t.Track).Render(strings.Repeat(ui.Block, n-lit))
 }
@@ -858,6 +893,28 @@ func (m model) lastStopIn(name string) (history.Entry, history.Distro, bool) {
 	for i := len(m.hist) - 1; i >= 0; i-- {
 		e := m.hist[i]
 		if e.What != "stop" {
+			continue
+		}
+		for _, d := range e.Distros {
+			if d.Name == name {
+				return e, d, true
+			}
+		}
+	}
+	return history.Entry{}, history.Distro{}, false
+}
+
+// stopAt is the history's stop of a distribution that ran at the moment
+// its own record names: from a minute before the stop began to a minute
+// after it ended, as the two clocks note it apart.
+func (m model) stopAt(name string, at time.Time) (history.Entry, history.Distro, bool) {
+	for i := len(m.hist) - 1; i >= 0; i-- {
+		e := m.hist[i]
+		if e.What != "stop" {
+			continue
+		}
+		end := e.At.Add(time.Duration((e.Took + 60) * float64(time.Second)))
+		if at.Before(e.At.Add(-time.Minute)) || at.After(end) {
 			continue
 		}
 		for _, d := range e.Distros {
@@ -993,12 +1050,20 @@ func wrapPieces(lead, rest string, w int, ps ...piece) []string {
 			space = false
 			continue
 		}
+		// first is this piece's first word: a unit joins a number of its own.
+		first := len(words)
 		for i, f := range strings.Split(p.text, " ") {
 			if i > 0 {
 				// A space was here, between two runs of letters.
 				space = true
 			}
 			if f == "" {
+				continue
+			}
+			// A number keeps its unit on its line: "60 s", not "60" and "s".
+			if n := len(words); f == "s" && space && n > first && endsInDigit(words[n-1].text) {
+				words[n-1].text += " " + f
+				space = false
 				continue
 			}
 			words = append(words, word{f, p.style, space})
@@ -1016,6 +1081,11 @@ func wrapPieces(lead, rest string, w int, ps ...piece) []string {
 		if wd.space && !empty && used+gap+ww > w {
 			lines = append(lines, line)
 			line, used, gap = rest, lipgloss.Width(rest), 0
+			// A separator does not start a line: what it parts from is on
+			// the line before.
+			if t, ok := strings.CutPrefix(wd.text, ui.Sep()+" "); ok {
+				wd.text, ww = t, lipgloss.Width(t)
+			}
 		}
 		line += strings.Repeat(" ", gap) + wd.style.Render(wd.text)
 		used += gap + ww
@@ -1023,6 +1093,10 @@ func wrapPieces(lead, rest string, w int, ps ...piece) []string {
 	}
 	return append(lines, line)
 }
+
+// endsInDigit reports whether s ends in a digit, as a number before its
+// unit does.
+func endsInDigit(s string) bool { return s != "" && s[len(s)-1] >= '0' && s[len(s)-1] <= '9' }
 
 // fromHistory reports whether a distribution's last stop is the history's
 // to say, by how what is noted inside it says its last start ended: not at
@@ -1565,7 +1639,9 @@ func (m model) containersWidth(p api.Probe, names int) int {
 // containerRows are a distribution's containers, one row each in w cells:
 // a square in its state's color, its name, image and state, and whether it
 // comes back after a stop. The state and those words stay whole: the
-// image goes first, then names are shortened in the middle, which keeps
+// image goes first; then, where names would be cut, a running container's
+// state gives its column to the words on coming back, which only a
+// running one has; then names are shortened in the middle, which keeps
 // their start and the end that tells web-1 from web-2.
 func (m model) containerRows(p api.Probe, w int) []string {
 	t := m.th
@@ -1574,6 +1650,13 @@ func (m model) containerRows(p api.Probe, w int) []string {
 	rest := 4 + 2 + stateW
 	if backW > 0 {
 		rest += 2 + backW
+	}
+	// One column for the state or the words on coming back, where the names
+	// would not stand whole beside both: a running container says it by
+	// those words (and its square), one that does not run by its state.
+	merged := backW > 0 && w-rest < nameMax
+	if merged {
+		rest = 4 + 2 + max(stateW, backW)
 	}
 	// The image, where every name stands whole beside it in imageW cells or
 	// its own width; it takes the room left, up to its own width.
@@ -1594,9 +1677,18 @@ func (m model) containerRows(p api.Probe, w int) []string {
 		if image {
 			row += "  " + ui.Fg(t.Muted).Render(ui.Middle(c.Image, imgW))
 		}
-		row += "  " + ui.Fit(containerState(c.State), stateW)
-		if back := m.backLine(c, p); back != "" {
+		back := m.backLine(c, p)
+		switch {
+		case merged && back != "":
+			// Running: the words on coming back say it.
 			row += "  " + back
+		case merged:
+			row += "  " + containerState(c.State)
+		default:
+			row += "  " + ui.Fit(containerState(c.State), stateW)
+			if back != "" {
+				row += "  " + back
+			}
 		}
 		out = append(out, row)
 	}
@@ -1754,7 +1846,8 @@ func stepName(s history.Step) string {
 	if s.Step == "hook" {
 		name = i18n.T("step.hook", s.Hook)
 	}
-	if s.Code != 124 && s.Code != 0 {
+	// 124 and 137 are a step out of its time (TERM, then KILL), not a code.
+	if s.Code != 124 && s.Code != 137 && s.Code != 0 {
 		name += i18n.T("stepname.exit", s.Code)
 	}
 	return name
@@ -2170,11 +2263,21 @@ func (m model) runView() string {
 		edge := ui.Fg(t.Cat[m.runColor(name, r)]).Render("▌") + " "
 		top := bold.Render(ui.Fit(name, inner))
 		res, ok := r.results[name]
+		// errLines are what went wrong, whole, under the block's first
+		// line, where its right side has no room for it.
+		var errLines []string
 		if ok {
 			words := m.resultWords(name, res, r)
+			if e := r.errs[name]; e != "" && lipgloss.Width(name)+2+lipgloss.Width(words) > inner {
+				words = ui.Fg(t.Cat[ui.CatCut]).Render("✗ " + i18n.T("run.failed"))
+				errLines = m.wrapHangTo("  ", "  ", e, inner, ui.Fg(t.Cat[ui.CatCut]))
+			}
 			top = bold.Render(name) + strings.Repeat(" ", max(2, inner-lipgloss.Width(name)-lipgloss.Width(words))) + words
 		}
 		b := block{top: []string{edge + top}}
+		for _, l := range errLines {
+			b.top = append(b.top, edge+l)
+		}
 		if r.act.kind == "stop" {
 			// The steps' words, their bars and their times: the words up to
 			// half the block, the bar what is left, the time eight cells.
@@ -2358,6 +2461,9 @@ func (m model) entryPane(e history.Entry, w, h int) []string {
 	if e.Version != "" {
 		lines = append(lines, ui.Fg(t.Faint).Render(ui.Fit("wsl-spawner "+e.Version, w)))
 	}
+	// Every distribution's steps in one set of columns: their bars line up,
+	// on one scale.
+	cols := stepColsOf(e.Distros...)
 	for _, d := range e.Distros {
 		lines = append(lines, "")
 		word, cat := i18n.T("end."+d.Result), endCat(d.Result)
@@ -2372,7 +2478,7 @@ func (m model) entryPane(e history.Entry, w, h int) []string {
 			head += ui.Fg(t.Muted).Render(sep + i18n.T("secs", int(math.Round(d.Took))))
 		}
 		lines = append(lines, ui.Fit(head, w))
-		lines = append(lines, m.stepRows(d, w)...)
+		lines = append(lines, m.stepRowsWith(d, w, cols)...)
 		if d.Err != "" {
 			lines = append(lines, m.wrapHangTo("    ", "    ", d.Err, w, ui.Fg(t.Cat[ui.CatCut]))...)
 		}
@@ -2505,11 +2611,12 @@ func (m model) stepLine(s step, now time.Time, width, barW int, scale time.Durat
 		mark = ui.Fg(t.Faint).Render("·")
 	case "run":
 		mark = ui.Fg(t.Cat[ui.CatStarting]).Render(spinner[m.spin%len(spinner)])
-		when = elapsed(now.Sub(s.since))
+		// The seconds right-aligned, as in the pane and the history.
+		when = ui.FitRight(elapsed(now.Sub(s.since)), 5)
 		color = t.Cat[ui.CatStarting]
 	case "done":
 		mark = ui.Fg(t.Cat[ui.CatClean]).Render("✓")
-		when = i18n.T("secs", int(s.took.Round(time.Second)/time.Second))
+		when = ui.FitRight(i18n.T("secs", int(s.took.Round(time.Second)/time.Second)), 5)
 	case "late":
 		mark = ui.Fg(t.Cat[ui.CatWarn]).Render("!")
 		when = i18n.T("run.late", int(s.took.Round(time.Second)/time.Second))
@@ -2520,8 +2627,8 @@ func (m model) stepLine(s step, now time.Time, width, barW int, scale time.Durat
 		color = t.Cat[ui.CatCut]
 	}
 	line := mark + " " + ui.Fit(stepWords(s), width)
-	// The bar: the step's time against the block's longest, growing while
-	// it runs; a step still to come has its track only.
+	// The bar: the step's time against the block's scale (stepScale),
+	// growing while it runs; a step still to come has its track only.
 	if barW >= 8 && scale > 0 {
 		used := s.took
 		if s.state == "run" {
@@ -2532,11 +2639,16 @@ func (m model) stepLine(s step, now time.Time, width, barW int, scale time.Durat
 	return line + "  " + ui.Fg(t.Muted).Render(when)
 }
 
-// stepScale is the longest of a distribution's steps so far, the one its
-// steps' bars are drawn against: at least a second, so a quick stop's bars
-// still say which step took the time.
+// stepScaleMin is the least a stop's step bars are drawn against: a
+// minute. Against the longest step alone, the step under way would always
+// be a full bar, which reads as done or out of time; against a minute it
+// grows while it runs, and only a step of a minute or more fills its bar.
+const stepScaleMin = time.Minute
+
+// stepScale is what a distribution's step bars are drawn against: the
+// longest of its steps so far, at least stepScaleMin.
 func (m model) stepScale(steps []step, now time.Time) time.Duration {
-	longest := time.Second
+	longest := stepScaleMin
 	for _, s := range steps {
 		d := s.took
 		if s.state == "run" {
@@ -2662,6 +2774,14 @@ func (m model) listKeys(extra ...[2]string) string {
 // checkView is the check's findings, group by group.
 func (m model) checkView() string {
 	t := m.th
+	shown, _ := m.scrolled(m.checkLines())
+	status := " " + ui.Fg(t.Muted).Render(i18n.T("check.title"))
+	return m.page(shown, status, m.listKeys([2]string{"r", i18n.T("key.reload")}))
+}
+
+// checkLines are the check's lines, all of them, before they scroll.
+func (m model) checkLines() []string {
+	t := m.th
 	var lines []string
 	switch {
 	case m.checking && m.check == nil:
@@ -2685,9 +2805,7 @@ func (m model) checkView() string {
 			lines = append(lines, m.groupLines(g, m.width-1)...)
 		}
 	}
-	shown, _ := m.scrolled(lines)
-	status := " " + ui.Fg(t.Muted).Render(i18n.T("check.title"))
-	return m.page(shown, status, m.listKeys([2]string{"r", i18n.T("key.reload")}))
+	return lines
 }
 
 // checkSummary is the check's verdict in a line: how many findings to look
@@ -2875,6 +2993,15 @@ func (m model) historyView() string {
 	if m.width >= wideMin && len(m.hist) > 0 {
 		return m.historyPanes()
 	}
+	shown, _ := m.scrolled(m.historyLines())
+	status := " " + ui.Fg(t.Muted).Render(i18n.TN("history.count", len(m.hist), len(m.hist)))
+	return m.page(shown, status, m.listKeys())
+}
+
+// historyLines are the history's lines on a narrow screen, newest first,
+// all of them, before they scroll.
+func (m model) historyLines() []string {
+	t := m.th
 	var lines []string
 	if len(m.hist) == 0 {
 		lines = append(lines, "  "+ui.Fg(t.Muted).Render(i18n.T("history.none")))
@@ -2891,13 +3018,17 @@ func (m model) historyView() string {
 			lines = append(lines, "  "+l)
 		}
 	}
-	shown, _ := m.scrolled(lines)
-	status := " " + ui.Fg(t.Muted).Render(i18n.TN("history.count", len(m.hist), len(m.hist)))
-	return m.page(shown, status, m.listKeys())
+	return lines
 }
 
 // helpView is the logo, the keys and how wsl-spawner works.
 func (m model) helpView() string {
+	shown, _ := m.scrolled(m.helpLines())
+	return m.page(shown, "", m.listKeys())
+}
+
+// helpLines are help's lines, all of them, before they scroll.
+func (m model) helpLines() []string {
 	t := m.th
 	keys := [][2]string{
 		{"↑ ↓", "help.select"}, {"s", "help.stop"}, {"S", "help.stopall"}, {"t", "help.start"}, {"m", "help.setup"},
@@ -2927,6 +3058,24 @@ func (m model) helpView() string {
 		}
 		lines = append(lines, m.wrapHang("  ", "  ", i18n.T(k), ui.Fg(t.Ink))...)
 	}
-	shown, _ := m.scrolled(lines)
-	return m.page(shown, "", m.listKeys())
+	return lines
+}
+
+// scrollMax is how far the screen open scrolls: on the wide history the
+// last run to choose, elsewhere the line that brings the last one to the
+// bottom. A key past it does nothing, so the first key back moves at once.
+func (m model) scrollMax() int {
+	switch m.mode {
+	case modeHistory:
+		if m.width >= wideMin && len(m.hist) > 0 {
+			// The scroll chooses a run: the oldest is the last.
+			return len(m.hist) - 1
+		}
+		return max(0, len(m.historyLines())-m.bodyHeight())
+	case modeCheck:
+		return max(0, len(m.checkLines())-m.bodyHeight())
+	case modeHelp:
+		return max(0, len(m.helpLines())-m.bodyHeight())
+	}
+	return 0
 }

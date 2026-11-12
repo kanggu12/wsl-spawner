@@ -55,8 +55,8 @@ The same `wsl-spawner` works in a WSL terminal opened after the install. With Sc
 [Setup](docs/setup.md#install) has every way to install and remove it; to look first, [try it in a
 sandbox](#try-it-in-a-sandbox).
 
-The first start opens a short wizard, a page for each choice, the language and colors shown as they are chosen.
-`wsl-spawner setup` opens it again.
+Setup is a short wizard, a page for each choice, the language and colors shown as they are chosen. The install opens
+it, or the first start where the install did not; `wsl-spawner setup` opens it again.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/setup-dark.png">
@@ -83,8 +83,9 @@ The first start opens a short wizard, a page for each choice, the language and c
   <img alt="A day with wsl-spawner. At sign-in, its sign-in program starts the distributions you chose. All day it keeps them running, where WSL would stop one that no Windows program uses. At sign-out, shutdown or an update's restart, Windows runs the sign-out scripts and wsl-spawner's runs last: it gives every service and container its time to stop, notes how the stop went, then stops WSL. At the next start, the containers come back and wsl-spawner knows how the last run ended. A crash, a Windows update of WSL or wsl --shutdown give no sign-out: the next start says the run ended without its time." src="docs/assets/day-light.svg">
 </picture>
 
-Nothing of wsl-spawner's stays running on Windows: the sign-in program starts the distributions and ends, keeping one
-running is a service inside it, and the sign-out hook runs and ends. Each part is a choice, per distribution: stop only,
+No program of wsl-spawner's stays running on Windows: the sign-in program starts the distributions and ends, and the
+sign-out hook runs and ends. Keeping a distribution running is a service inside it, which holds Windows' own
+`waitfor.exe` open, as Task Manager shows. Each part is a choice, per distribution: stop only,
 set up (a start script that brings the containers back), kept running, started at sign-in.
 
 ## A stop, step by step
@@ -150,7 +151,7 @@ docker run --rm -it ghcr.io/kanggu12/wsl-spawner-demo
 | `stop NAME... \| --all [--shutdown] [--yes]` | stop the slow way, printing each step; `--shutdown` stops WSL after |
 | `start NAME...` | start, and say which containers came back |
 | `set NAME [--managed] [--keep] [--logon] [--skip]` | choose what wsl-spawner does with it; `=false` turns one off |
-| `hook install \| remove \| status` | the sign-out hook, in the local Group Policy; installing it asks for an administrator |
+| `hook install \| remove \| status` | the sign-out hook, in the local Group Policy; installing and removing it ask for an administrator |
 | `check [--json]` | look over what stopping and starting stand on, and what to do about it |
 | `history [--all] [--json] [--clear]` | the stops and starts so far: who asked, and how each distribution went |
 | `setup` | the wizard; flags (`--mode cli`, `--stop-limit 600`, ...) set a choice without it |
@@ -164,9 +165,9 @@ In `%APPDATA%\wsl-spawner\config.toml`, every key optional. Setup and `set` writ
 
 ```toml
 mode = "tui"              # what a bare wsl-spawner opens: "tui" or "cli"
-skip = ["Scratch"]        # distributions left to WSL: never stopped or started by wsl-spawner
+skip = ["Scratch"]        # left to WSL: no slow stop, never started; WSL's own stop still ends them
 logon = ["Ubuntu-24.04"]  # started at sign-in, in this order, and kept running
-resume = "running"        # what comes back: "running" (all that ran), "policy" (those with a restart policy), "off"
+resume = "running"        # what comes back: "running" (all that ran), "policy" (always, unless-stopped), "off"
 stop_limit = 300          # seconds a distribution's steps may take together
 ```
 
@@ -188,7 +189,7 @@ wsl-spawner runs `wsl --terminate` itself, after its own steps.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pieces-dark.svg">
-  <img alt="What runs where. In PowerShell or Windows Terminal, wsl-spawner.exe draws the screen and reads the keys. In a WSL terminal, wsl-spawner, the Linux build of the same program, draws the screen there and asks the .exe for each answer, as JSON. At sign-in and sign-out, Windows starts wsl-spawnerw.exe, the same program with no window: logon starts the distributions you chose, logoff stops them all. The program asks wsl.exe, which lists, starts and stops distributions and runs its scripts in them as root. Inside each distribution set up: start.sh at each start, a service that keeps it running, its notes in /var/lib/wsl-spawner. It sets the sign-in program as you and, as an administrator, the sign-out hook and its wait in the local Group Policy. It reads the event logs after a start that ended without its time. It runs as you, with no network, and nothing of it stays running on Windows." src="docs/assets/pieces-light.svg">
+  <img alt="What runs where. In PowerShell or Windows Terminal, wsl-spawner.exe draws the screen and reads the keys. In a WSL terminal, wsl-spawner, the Linux build of the same program, draws the screen there and asks the .exe for each answer, as JSON. At sign-in and sign-out, Windows starts wsl-spawnerw.exe, the same program with no window: logon starts the distributions you chose, logoff stops them all. The program asks wsl.exe, which lists, starts and stops distributions and runs its scripts in them as root. Inside each distribution set up: start.sh at each start, a service that keeps it running, its notes in /var/lib/wsl-spawner. It sets the sign-in program as you and, as an administrator, the sign-out hook and its wait in the local Group Policy. It reads the event logs after a start that ended without its time. It runs as you, with no network, and no program of it stays running on Windows; a distribution kept running holds Windows' own waitfor.exe." src="docs/assets/pieces-light.svg">
 </picture>
 
 One Go program, built for Windows and for Linux. On Windows it does the work; in WSL the same program is a launcher
@@ -197,7 +198,8 @@ only through `wsl.exe`, as root, with POSIX `sh` scripts of its own that print `
 just to read it.
 
 - **The screen stands on the commands' JSON alone.** It can do nothing a command cannot, so a script can do all of it.
-- **Nothing stays running on Windows.** The sign-in program and the sign-out hook start, do their work and end.
+- **A distribution is never started to be read.** One that does not run says nothing about what runs in it, and
+  Docker's daemon stopped by hand is not woken to be asked.
 - **Docker's daemon is stopped, not its containers**, with the time left, so their restart policies stay.
 - **Windows and WSL are each one interface.** The tests fill them with a made-up PC, whose every call fails unless the
   test gave it, and a made-up WSL: no test reaches the PC it runs on.
@@ -209,6 +211,10 @@ just to read it.
 **Does it need an administrator?** Only to install or remove the sign-out hook, which lives in the local Group Policy,
 with the policy's wait for sign-out scripts when it is too short for the stop. Everything else runs as you.
 
+**Does signing out take longer?** As long as the stops take: Windows shows its sign-out screen while the hook gives
+each service and container its time, `stop_limit` at most, then a few seconds for WSL. A distribution with nothing slow
+to stop is done in seconds. `wsl-spawner history` says how long each took.
+
 **What does it change?** Inside a distribution, nothing until you set wsl-spawner up in it: then a service, a start
 script and `/etc/wsl-spawner/pre-stop.d` for your own programs, a second service when it is kept running, and the stops
 and starts it notes in `/var/lib/wsl-spawner`. On Windows, its settings and history, the sign-in program when a
@@ -216,7 +222,7 @@ distribution starts at sign-in, and the sign-out hook when you install it. `wsl-
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/touches-dark.svg">
-  <img alt="What wsl-spawner reads and what it changes. It reads WSL's own answers (the distributions Windows lists, which run, WSL's version); inside a running distribution, through wsl.exe as root, systemd, its journal, the units, the containers and its own notes, never starting a distribution or Docker's daemon just to read them; and on Windows, the sign-out scripts and the policy's wait, the sign-in program, and after a run that ended without its time, the event logs. It runs as you. It changes, inside each distribution you set it up in, a start script, two services and its notes; for you, the sign-in program and its settings and history; as an administrator, which Windows asks for, the sign-out hook in the local Group Policy and the policy's wait when it is too short. wsl-spawner set NAME --managed=false and wsl-spawner uninstall take out all of it again; your hooks and units stay." src="docs/assets/touches-light.svg">
+  <img alt="What wsl-spawner reads and what it changes. It reads WSL's own answers (the distributions Windows lists, which run, WSL's version); inside a running distribution, through wsl.exe as root, systemd, its journal, the units, the containers and its own notes, never starting a distribution or Docker's daemon just to read them; and on Windows, the sign-out scripts and the policy's wait, the sign-in program, and after a run that ended without its time, the event logs. It runs as you. It changes, inside each distribution you set it up in, a start script, two services and its notes; for you, the sign-in program and its settings and history; as an administrator, which Windows asks for, the sign-out hook in the local Group Policy and the policy's wait when it is too short. wsl-spawner set NAME --managed=false takes out what it set up in a distribution; uninstall takes out the rest, the settings and history too with --purge; your hooks and units stay." src="docs/assets/touches-light.svg">
 </picture>
 
 **Does it work with Docker Desktop?** Docker Desktop's distributions are its own: wsl-spawner leaves them be and says
@@ -228,9 +234,17 @@ user's engine, rootless Podman's or rootless Docker's, are not seen, stopped or 
 
 **What about WSL 1?** A WSL 1 distribution has no VM and no systemd, nothing to give time to: it is listed, and left be.
 
-**What if WSL updates itself, or Windows crashes?** Nothing runs first then. `status`, `check` and the screen say next
-time that the start ended without its time, and, from the distribution's journal and Windows' event logs, what ended it:
-a WSL update, a shutdown or a sign-out without the hook, a crash, or a stop outside wsl-spawner.
+**What if WSL updates itself, or Windows crashes?** Nothing runs first then. In a distribution wsl-spawner is set up
+in, `status`, `check` and the screen say next time that the start ended without its time, and, from the
+distribution's journal and Windows' event logs, what ended it: a WSL update, a shutdown or a sign-out without the hook,
+a crash, or a stop outside wsl-spawner.
+
+**Why did my terminal close?** It ran in the distribution you stopped. The stop goes on in a copy of wsl-spawner with
+no window, which the terminal's end does not end, and `wsl-spawner history` says how it went.
+
+**Does it work with wsl-shrinker?** [wsl-shrinker](https://github.com/kanggu12/wsl-shrinker) 0.7 and later stop a
+distribution through wsl-spawner where it is installed, so its hooks, units and containers get their time before a
+disk is compacted. Those stops are listed in the history as asked by hand.
 
 **How do I remove it?** `wsl-spawner uninstall`, in PowerShell or WSL. It takes out the hook, the sign-in program and
 what it set up in the running distributions first. `--purge` removes the settings and the history too.
@@ -266,5 +280,5 @@ go run ./cmd/wsl-spawner --demo
 
 ## License
 
-MIT ([LICENSE](LICENSE)). The libraries wsl-spawner is built from, and the font of its logo, are listed with their
-licenses in [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
+MIT ([LICENSE](LICENSE)). The libraries wsl-spawner is built from, and the font of its logo and figures, are listed
+with their licenses in [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).

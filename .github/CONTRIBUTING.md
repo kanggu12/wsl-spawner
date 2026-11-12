@@ -16,7 +16,7 @@ The code sits in layers. Imports go down, never up; `internal/layers_test.go` fa
 | app | `app`, `app/demo` | the settings, WSL and this PC put together; the demo's made-up PC |
 | engine | `distros`, `inside`, `stop`, `setup`, `check`, `history` | reading the distributions, the scripts run inside one, a stop, setting up and taking out, the check, the history |
 | settings | `config` | `config.toml`, read, and written as a person wrote it |
-| machine | `wsl`, `winapi`, `gpo` | `wsl.exe`, Windows' calls, the local Group Policy's files |
+| machine | `wsl`, `winapi`, `gpo`, `eventlog` | `wsl.exe`, Windows' calls, the local Group Policy's files and the policy's wait, Windows' event logs |
 | core | `version`, `plain` | the build's version; text read from a distribution made safe to show |
 
 Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, and setting up

@@ -3,6 +3,11 @@
 Start with `wsl-spawner check`: it reads everything a stop and a start stand on and says what to do about each finding.
 `wsl-spawner history --json` has each stop's steps, their exit codes and how long each took.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/trouble-dark.svg">
+  <img alt="What wsl-spawner says, and where Troubleshooting reads it. wsl-spawner check: its last stop ran out of time in a step (docker), read under A stop ran out of time; a step of its last stop failed (hook 10-backup-db), under A step failed; WSL was updated at 11-10 22:35, which ends every distribution, under The last start ended without its time; sign-out hook installed, but scripts after it run once WSL has stopped, under The sign-out hook did not run; kept running needs Windows programs, which do not run in it, under A distribution does not stay running. On the screen after a start: started, web brought back, db did not start, under A container did not come back. wsl-spawner set Work --managed: setting wsl-spawner up in Work: systemd does not run in it, under Set up fails. wsl-spawner in a WSL terminal: wsl-spawner.exe was not found next to this file or on the Windows PATH, under The screen in a WSL terminal." src="assets/trouble-light.svg">
+</picture>
+
 ## A stop ran out of time
 
 The stop ended `limit` (exit code 3, `!` on the screen): a step was still running at `stop_limit`.

@@ -85,7 +85,7 @@ func TestEveryStateFitsEverySizeInBothLanguages(t *testing.T) {
 }
 
 func TestTheMainScreenSaysWhatMatters(t *testing.T) {
-	// At the README's size: two panes; the table names whose a distribution
+	// At the size of the README's animation: two panes; the table names whose a distribution
 	// is in short, and the last stop says who asked in short words, as its
 	// line has room for.
 	f := ansi.Strip(frame(t, "en", 120, 30, ""))

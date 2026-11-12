@@ -13,6 +13,11 @@
 
 ## Install
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/ways-dark.svg">
+  <img alt="Ways to install wsl-spawner and where it runs. In PowerShell, one line checks the release's checksum, puts the folder on your PATH and opens setup. Scoop installs the manifest from the release and keeps it current. By hand, the zip for your processor goes in a folder on your PATH. For a standard user, an administrator installs it under Program Files, with the sign-out hook. Every way gives one folder: wsl-spawner.exe, the Windows program; wsl-spawnerw.exe, the same with no window, which the sign-in program and the sign-out hook start; and wsl-spawner, the launcher for WSL. It runs in PowerShell and Windows Terminal, inside WSL under the same name, and at sign-in and sign-out with no window." src="assets/ways-light.svg">
+</picture>
+
 In PowerShell, as you, not as an administrator:
 
 ```powershell

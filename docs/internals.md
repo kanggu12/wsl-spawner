@@ -1,6 +1,14 @@
 # Internals
 
+How wsl-spawner is put together: what runs where, the layers of the code, what it reads and changes, the decisions
+behind them, and the tests and CI that hold them.
+
 ## What runs where
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/pieces-dark.svg">
+  <img alt="What runs where. In PowerShell or Windows Terminal, wsl-spawner.exe draws the screen and reads the keys. In a WSL terminal, wsl-spawner, the Linux build of the same program, draws the screen there and asks the .exe for each answer, as JSON. At sign-in and sign-out, Windows starts wsl-spawnerw.exe, the same program with no window: logon starts the distributions you chose, logoff stops them all. The program asks wsl.exe, which lists, starts and stops distributions and runs its scripts in them as root. Inside each distribution set up: start.sh at each start, a service that keeps it running, its notes in /var/lib/wsl-spawner. It sets the sign-in program as you and, as an administrator, the sign-out hook and its wait in the local Group Policy. It reads the event logs after a start that ended without its time. It runs as you, with no network, and nothing of it stays running on Windows." src="assets/pieces-light.svg">
+</picture>
 
 | Where | What | How |
 |:---|:---|:---|
@@ -18,6 +26,11 @@ does not know is skipped, so a newer script can say more.
 
 The code under `internal/` sits in layers. Imports go down, never up; `internal/layers_test.go` fails when one goes up.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/layers-dark.svg">
+  <img alt="The layers of the code under internal, highest first; an import goes down, never up, and a test fails when one goes up. cmd: the program, in WSL the launcher (wsl-spawner). front: what people use (cli, tui, api, ui, i18n). app: puts the rest together, once (app, demo). engine: what a stop, a start and a check do (distros, inside, stop, setup, check, history). settings: what people set (config). machine: reads and changes the machine (wsl, winapi, gpo, eventlog). core: safe words and the version, no I/O (plain, version)." src="assets/layers-light.svg">
+</picture>
+
 | Layer | Packages | |
 |:---|:---|:---|
 | cmd | `cmd/wsl-spawner` | the program; in WSL, the launcher that hands each command to `wsl-spawner.exe` |
@@ -25,8 +38,21 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 | app | `app`, `app/demo` | the settings, WSL and this PC put together; a made-up PC for the demo and the tests |
 | engine | `distros`, `inside`, `stop`, `setup`, `check`, `history` | the distributions and what runs in them, the scripts run inside, a stop, set-up and taking out, the check, the history |
 | settings | `config` | `config.toml`, and writing keys into it as written by hand |
-| machine | `wsl`, `winapi`, `gpo` | `wsl.exe` and WSL's registry, Windows' calls, the local Group Policy's files |
-| core | `version` | the build's version |
+| machine | `wsl`, `winapi`, `gpo`, `eventlog` | `wsl.exe` and WSL's registry, Windows' calls, the local Group Policy's files and the policy's wait, Windows' event logs |
+| core | `plain`, `version` | what a distribution says made safe to show, the build's version |
+
+## What it reads and changes
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/touches-dark.svg">
+  <img alt="What wsl-spawner reads and what it changes. It reads WSL's own answers (the distributions Windows lists, which run, WSL's version); inside a running distribution, through wsl.exe as root, systemd, its journal, the units, the containers and its own notes, never starting a distribution or Docker's daemon just to read them; and on Windows, the sign-out scripts and the policy's wait, the sign-in program, and after a run that ended without its time, the event logs. It runs as you. It changes, inside each distribution you set it up in, a start script, two services and its notes; for you, the sign-in program and its settings and history; as an administrator, which Windows asks for, the sign-out hook in the local Group Policy and the policy's wait when it is too short. A stop gives every service and container its time." src="assets/touches-light.svg">
+</picture>
+
+It reads without asking: WSL's own answers, and in a running distribution, as root, systemd, its journal, the units,
+the containers and its notes. It changes nothing before you confirm, or before a command you typed asks for that
+change: inside a distribution, only what setting it up puts there; on Windows, its settings and history, the sign-in
+program under your `Run` key, and as an administrator the sign-out hook and the policy's wait.
+[Settings](settings.md#the-files-wsl-spawner-writes) lists every file.
 
 ## Decisions
 
@@ -46,7 +72,12 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 - **The engines are root's.** The scripts run as root and ask root's engines: the containers of another user's engine,
   rootless Podman's or rootless Docker's, are not seen, stopped or brought back.
 
-## The tests
+## The tests and CI
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/release-dark.svg">
+  <img alt="From a change to a release. make check runs gofmt, vet and staticcheck for Linux and Windows, shellcheck and go test -race. make test-windows runs every package again as a Windows program, started from WSL. CI runs both, with fuzzing and govulncheck, builds the zips and the demo image, tests on Windows Server 2022 and 2025 and Windows 11 on ARM, stops real distributions on WSL 2, and runs the installers; weekly too. A vX.Y.Z tag runs CI, then builds the zips with provenance, the Scoop manifest and the demo image, then installs the release as you, as a standard user and with Scoop." src="assets/release-light.svg">
+</picture>
 
 - **The scripts** run under the test machine's `sh` against made-up roots: a temporary folder stands for `/`, with
   made-up `systemctl`, `docker`, `podman` and `wslpath`. `internal/engine/inside/main_test.go` fails the run when a
@@ -61,3 +92,13 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 - **End to end** (CI, on Windows Server 2025): a throwaway distribution with systemd and a service that takes 40 seconds
   to stop, stopped by the release's program, which waits for it; set up, kept running, started again; the sign-out hook
   installed, read back and removed.
+
+CI (`.github/workflows`) runs on every push and weekly:
+
+| Workflow | Runs |
+|:---|:---|
+| `ci.yml` | `make check`, fuzzing, govulncheck and the third-party notices on Linux; the zips and the demo image; every package on Windows Server 2022, 2025 and Windows 11 on Arm; `install.ps1` in PowerShell 7, Windows PowerShell 5.1 and on Arm |
+| `wsl.yml` | on Windows Server 2025, a lab distribution with systemd and three containers: a stop that gives each its time, a start that brings them back, WSL alone cutting it short and the next look saying so, an update of WSL named, the sign-out hook and the sign-in program run as Windows runs them, the wait raised and put back |
+| `installers.yml` | at a release: the release's own zips installed as you, as a standard user from an administrator's install, with Scoop, and the demo image |
+| `release.yml` | at a `vX.Y.Z` tag: CI, then the zips with provenance, the Scoop manifest and the demo image, then `installers.yml` |
+| `canary.yml` | weekly, `wsl.yml` on WSL's newest pre-release, as an early warning |

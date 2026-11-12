@@ -177,6 +177,12 @@ type uninstallPlan struct {
 	// noQuiet is set when the quiet build is not there: this program itself
 	// is started as an administrator instead, for the hook must come out.
 	noQuiet bool
+	// waitBack is what Windows' wait for the sign-out scripts goes back to,
+	// in seconds, where hook install raised it and it is still the one it
+	// set; 0 for nothing to put back. waitKept is set when such a raise
+	// stays, for another copy's hook that stays.
+	waitBack int
+	waitKept bool
 	// cannot is why the hook cannot be taken out of the sign-out scripts as
 	// they are, as Windows reads them, nil when it can: tried on the text
 	// read, before Windows asks for an administrator who could not either.
@@ -205,6 +211,16 @@ func (p *uninstallPlan) leftovers(ctx context.Context, a *app.App) {
 		// The removal tried on the text, as hook remove tries it.
 		if p.hook != "" || len(p.gone) > 0 {
 			_, p.cannot = gpo.WithoutHook(h.text, h.Exe, p.gone...)
+		}
+	}
+	// A wait hook install raised goes back with the hook, or on its own; a
+	// standard user's leaves it, the administrator's; and it stays while
+	// another copy's hook stays, which may need it.
+	if r, ok := a.PC.Raised(); ok && !a.PC.IsStandardUser() {
+		if len(p.staying) > 0 {
+			p.waitKept = true
+		} else {
+			p.waitBack = r.Before.Effective()
 		}
 	}
 	if _, ok, _, err := a.PC.LogonEntry(logonName); err == nil && ok {
@@ -247,13 +263,15 @@ func (p uninstallPlan) deletable(pc app.PC) bool {
 }
 
 // elevates is the program Windows would start as an administrator for the
-// hook's removal, "" when none is: no hook to take out, or this process
-// is one already.
+// hook's removal, and the wait's, "" when none is: no hook to take out and
+// no wait to put back, or this process is one already.
 func (p uninstallPlan) elevates(pc app.PC) string {
 	switch {
-	case p.hook == "" && len(p.gone) == 0, pc.Elevated():
+	case p.hook == "" && len(p.gone) == 0 && p.waitBack == 0, pc.Elevated():
 		return ""
-	case p.noQuiet:
+	case p.noQuiet, p.quiet == "":
+		// Without the quiet build, or the sign-out scripts unread so it
+		// is not known: this program itself, started hidden.
 		return p.exe
 	}
 	return p.quiet
@@ -292,19 +310,36 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 	pc := a.PC
 	exe, dir, settings, state, scoop, own, why, purge := p.exe, p.dir, p.settings, p.state, p.scoop, p.own, p.why, p.purge
 	var notes []string
+	// The administrator's copy took out what it found, where this user could
+	// not read the sign-out scripts: a hook of wsl-spawner's among them.
+	adminRead := false
 	// The sign-out hook, as an administrator: left behind, every sign-out
 	// would start a program that is gone. Not taken out, nothing goes. The
 	// hooks of copies that are gone go with it, or on their own.
-	if p.hook != "" || len(p.gone) > 0 {
+	if files := p.hook != "" || len(p.gone) > 0; files || p.waitBack > 0 {
 		var err error
+		var wc waitChange
 		switch run := p.elevates(pc); {
 		case run == "":
-			err = change(pc, false, p.quiet, p.gone)
+			wc, err = changeHere(pc, false, p.quiet, p.gone, files, 0, p.waitBack > 0)
 		default:
 			// The quiet build, or, without it, as when a virus scanner took
 			// it, this program, started hidden: the hook must come out.
 			// Who else could change it was asked before the question.
-			err = changeAsAdmin(pc, false, run)
+			wc, err = changeAsAdmin(pc, false, run, files, p.waitBack > 0)
+			adminRead = err == nil && p.unread != nil
+		}
+		// The wait, as the hook goes: put back, or why it stays. With no
+		// hook to take out, a wait that stays stops nothing: said, and the
+		// uninstall goes on.
+		switch {
+		case !files && err != nil:
+			notes = append(notes, "Windows' wait for the sign-out scripts stays as wsl-spawner hook install raised it: "+bareError(err))
+			err = nil
+		case wc.err != nil:
+			notes = append(notes, "Windows' wait for the sign-out scripts stays as wsl-spawner hook install raised it: "+bareError(wc.err))
+		case wc.back != nil:
+			notes = append(notes, fmt.Sprintf("put back Windows' wait for the sign-out scripts: %d s", wc.back.Effective()))
 		}
 		// What went, as the end says it.
 		what := "the sign-out hook"
@@ -333,7 +368,7 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 				what = "wsl-spawner uninstall tries again"
 			}
 			return hint(errors.New("nothing was removed: the sign-out hook stays: "+msg), what)
-		default:
+		case files:
 			// Done; for a copy that is gone, read or not: it starts nothing.
 			notes = append(notes, "took "+what+" out of the local Group Policy")
 		}
@@ -342,7 +377,12 @@ func (p uninstallPlan) now(ctx context.Context, a *app.App, out io.Writer) error
 	for _, c := range p.staying {
 		notes = append(notes, "the sign-out hook of another copy stays: "+hookLine(c.Exe)+": that copy's own uninstall takes it out")
 	}
-	if p.unread != nil {
+	switch {
+	case adminRead:
+		// Read by the administrator's copy, which took out this copy's
+		// hook where it found one, as hook remove does.
+		notes = append(notes, "this user could not read the sign-out scripts ("+bareError(p.unread)+"): the copy started as an administrator took out wsl-spawner's hook where it was there")
+	case p.unread != nil:
 		// Nothing was found to take out, and nothing could be: said, so
 		// a hook left among the scripts is not a surprise.
 		notes = append(notes, "any sign-out hook of wsl-spawner's stays: "+bareError(p.unread))
@@ -498,6 +538,12 @@ func (p uninstallPlan) say(w io.Writer) {
 	for _, exe := range p.gone {
 		line("removes", "the sign-out hook of a copy that is gone: "+hookLine(exe)+admin)
 		admin = ""
+	}
+	if p.waitBack > 0 {
+		line("removes", fmt.Sprintf("wsl-spawner's raise of Windows' wait for the sign-out scripts, back to %d s", p.waitBack)+admin)
+	}
+	if p.waitKept {
+		line("keeps  ", "wsl-spawner's raise of Windows' wait for the sign-out scripts, for another copy's hook")
 	}
 	for _, c := range p.staying {
 		line("keeps  ", "the sign-out hook of another copy: "+hookLine(c.Exe)+" (that copy's own uninstall takes it out)")

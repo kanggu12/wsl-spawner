@@ -62,7 +62,13 @@ slowest. That is what wsl-spawner asks for, with enough time.
 `wsl-spawner hook install` adds a sign-out script to the local Group Policy, after any other: `wsl-spawnerw.exe logoff`,
 the build of wsl-spawner with no console, so no window opens. Windows runs the sign-out scripts as you sign out, and
 before every shutdown and restart, those an update makes too, and waits for them, up to the policy's wait for all of
-them together (600 seconds by default): the hook, last, has what the others leave. The hook stops every running
+them together (600 seconds by default): the hook, last, has what the others leave. Where that wait is less than
+`stop_limit` and a minute, `hook install` raises it, as an administrator, to `stop_limit`, a minute for WSL to end and a
+minute for each other sign-out script, PowerShell's too, in whole minutes. It writes the policy's value
+(`HKLM\Software\Policies\Microsoft\Windows\System`, `MaxGPOScriptWait`), and notes what was there first under
+`HKLM\Software\wsl-spawner`; `hook remove` and `uninstall` put that back, as long as the wait is still the one it set
+and no other copy's hook stays: one changed since is someone else's, and stays. A standard user's hook is an
+administrator's install: its wait is the administrator's, and is left as it is. The hook stops every running
 distribution of wsl-spawner's as above, then WSL. Windows runs the PowerShell sign-out scripts (`psscripts.ini`) after
 these unless it is set to run them first, and a domain's after the local ones: `hook status` lists the PowerShell ones
 and the order the policy gives them.
@@ -90,7 +96,25 @@ another account's, stays, and its own copy takes it out. Taking the hook out nee
 gone, Windows starts `wsl-spawner.exe` as the administrator instead.
 
 A Windows update of WSL itself, `wsl --shutdown` typed by hand, or a crash stop WSL without a sign-out: the hook cannot
-run first. `status` and `check` say next time that the start ended without its time.
+run first. `status` and `check` say next time that the start ended without its time, and, where they can tell, what
+ended it. The distribution's journal holds that start's last lines: when it ended, and whether it was asked to power
+off, as WSL asks a distribution it ends (systemd's `Shutting down.` as PID 1, or WSL's own line in the kernel's log when
+the power off ran out of its time), or went without a word. Only lines as journalctl starts an entry count, and only
+those two say it was asked: a line any program logs carries its own PID. Its moments are set to Windows' clock first, by
+how far the distribution's clock was off it as it was read. Windows' event logs hold what happened then:
+
+| What | Windows' events | Fits a start that |
+| --- | --- | --- |
+| Windows did not shut down cleanly | Kernel-Power 41, a bugcheck's 1001 and EventLog 6008 (with Windows' last stamp of being alive), logged at the boot after | went without a word, the boot after it the first since, with no shutdown or sign-out before it |
+| WSL was updated | Windows Installer's and Windows Update's events that name WSL | ended within the install, from its first event to its last |
+| Windows shut down or restarted | User32 1074, EventLog 6006, Kernel-Power 109, Kernel-General 13 | ended about then, asked to power off or not |
+| You signed out | Winlogon 7002, yours | ended about then, asked to power off or not |
+
+The first that fits is what ended it; none, and it was stopped outside wsl-spawner (`wsl --shutdown`, `wsl --terminate`,
+or WSL itself). A Windows event alone does not say it: a start may end long before Windows next shuts down. The logs are
+read only, as any user signed in may, within a few seconds; one that cannot be read leaves it unsaid. Updates are read
+for the first minutes after the start ended, as other programs' installs fill the log. What it says is a hint, not
+proof: any program a signed-in user runs may write an event of Windows Installer's.
 
 ## The start
 

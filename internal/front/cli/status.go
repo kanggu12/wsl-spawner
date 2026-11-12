@@ -50,13 +50,17 @@ func statusCmd(p *apps) *cobra.Command {
 
 // status prints the distributions as a table, in English, or as JSON.
 func status(ctx context.Context, a *app.App, out io.Writer, asJSON bool) error {
-	ds, err := distros.Read(ctx, a.WSL, a.Config)
+	// Timed on the App's clock, as the check's: a distribution's clock is
+	// set beside it, for what ended a start that was cut.
+	ds, err := distros.ReadWithClock(ctx, a.WSL, a.Config, a.Now)
 	if err != nil {
 		return err
 	}
 	info, _ := a.WSL.Info(ctx)
+	// What ended each start that was cut, where it can be told.
+	causes := cutCauses(ctx, a, ds)
 	if asJSON {
-		return printJSON(out, statusJSON(info.Version, ds, a.Config))
+		return printJSON(out, statusJSON(info.Version, ds, a.Config, causes))
 	}
 	// The commands print English, for scripts: only the overview speaks
 	// the person's language.
@@ -67,20 +71,20 @@ func status(ctx context.Context, a *app.App, out io.Writer, asJSON bool) error {
 	// one that cannot be read leaves those dashes.
 	hist, _ := history.Open(a.Dir).All()
 	// Every column, however wide: a script reads them all.
-	return writeStatus(out, lookFor(out), info.Version, ds, hist, 0)
+	return writeStatus(out, lookFor(out), info.Version, ds, hist, causes, 0)
 }
 
 // overview is what a bare start prints in CLI mode: the table in the
 // person's language, then the commands to use next, with the names of this
 // PC's distributions in them, all in width cells, the terminal's.
 func overview(ctx context.Context, a *app.App, out io.Writer, l look, width int) error {
-	ds, err := distros.Read(ctx, a.WSL, a.Config)
+	ds, err := distros.ReadWithClock(ctx, a.WSL, a.Config, a.Now)
 	if err != nil {
 		return err
 	}
 	info, _ := a.WSL.Info(ctx)
 	hist, _ := history.Open(a.Dir).All()
-	if err := writeStatus(out, l, info.Version, ds, hist, width); err != nil {
+	if err := writeStatus(out, l, info.Version, ds, hist, cutCauses(ctx, a, ds), width); err != nil {
 		return err
 	}
 	var next [][2]string
@@ -154,8 +158,8 @@ func wrapWords(s string, w int) []string {
 
 // writeStatus prints the headline and the table, in width cells when width
 // is more than 0: the columns go as the screen's do, the least needed
-// first.
-func writeStatus(out io.Writer, l look, wslVersion string, ds []distros.Distro, hist []history.Entry, width int) error {
+// first. causes are what ended the starts that were cut (cutCauses).
+func writeStatus(out io.Writer, l look, wslVersion string, ds []distros.Distro, hist []history.Entry, causes map[string]inside.Cause, width int) error {
 	head := l.bold("wsl-spawner " + version.String())
 	if wslVersion != "" {
 		head += l.muted(" · WSL " + wslVersion)
@@ -173,7 +177,7 @@ func writeStatus(out io.Writer, l look, wslVersion string, ds []distros.Distro, 
 		l.muted(strings.ToUpper(i18n.T("col.laststop"))),
 	}}
 	for _, d := range ds {
-		rows = append(rows, statusRow(l, d, hist))
+		rows = append(rows, statusRow(l, d, hist, causes[d.Name]))
 	}
 	if width > 0 {
 		rows = fitColumns(rows, width)
@@ -231,8 +235,9 @@ func fitColumns(rows [][]string, width int) [][]string {
 	return out
 }
 
-// statusRow is one distribution's row of the table.
-func statusRow(l look, d distros.Distro, hist []history.Entry) []string {
+// statusRow is one distribution's row of the table; cause is what ended
+// its last start, when that was cut and it is known.
+func statusRow(l look, d distros.Distro, hist []history.Entry, cause inside.Cause) []string {
 	state := l.muted(i18n.T("state.stopped"))
 	if d.Running {
 		state = l.running(i18n.T("state.running"))
@@ -248,7 +253,7 @@ func statusRow(l look, d distros.Distro, hist []history.Entry) []string {
 		// stop may be in the history.
 		return append(row, l.muted("–"), lastStopWords(l, d.Name, hist, l.muted("–")))
 	}
-	end := endWords(l, *pr)
+	end := endWords(l, *pr, cause)
 	// Nothing noted inside, or only this start, the first since it was set
 	// up: wsl-spawner's last stop of it is the history's, as on the screen.
 	if e, _ := pr.LastEnd(); e == inside.EndUnknown || e == inside.EndFirst {
@@ -360,8 +365,9 @@ func containerWords(l look, p inside.Probe) string {
 	return s
 }
 
-// endWords says how the start before this one ended, and when.
-func endWords(l look, p inside.Probe) string {
+// endWords says how the start before this one ended, and when; for one
+// that was cut, what ended it where cause says.
+func endWords(l look, p inside.Probe, cause inside.Cause) string {
 	end, prev := p.LastEnd()
 	words := map[inside.Ending]string{
 		inside.EndUnknown: "end.unknown", inside.EndFirst: "end.first", inside.EndClean: "end.clean",
@@ -381,8 +387,13 @@ func endWords(l look, p inside.Probe) string {
 		}
 		return s
 	case inside.EndCut:
-		// When it ended is not known: when the start it ended began is.
 		s = l.bad(s)
+		// What ended it, and when, where its journal and Windows' logs
+		// tell it.
+		if words, when := causeWords(cause); words != "" {
+			return s + l.muted(": "+words+" "+when)
+		}
+		// When it ended is not known: when the start it ended began is.
 		if !prev.At.IsZero() {
 			s += l.muted(" " + i18n.T("end.since", prev.At.Local().Format("01-02 15:04")))
 		}
@@ -409,8 +420,9 @@ var endNames = map[inside.Ending]string{
 	inside.EndLimit: "limit", inside.EndFailed: "failed", inside.EndCut: "cut",
 }
 
-// statusJSON is the status as JSON gives it.
-func statusJSON(wslVersion string, ds []distros.Distro, c config.Config) api.Status {
+// statusJSON is the status as JSON gives it; causes are what ended the
+// starts that were cut (cutCauses).
+func statusJSON(wslVersion string, ds []distros.Distro, c config.Config, causes map[string]inside.Cause) api.Status {
 	out := api.Status{Schema: schema, WSL: wslVersion, List: []api.Distro{}, StopLimit: c.StopLimit, Resume: c.Resume}
 	for _, d := range ds {
 		o := api.Distro{Name: d.Name, Default: d.Default, Version: d.Version, Running: d.Running,
@@ -462,6 +474,11 @@ func statusJSON(wslVersion string, ds []distros.Distro, c config.Config) api.Sta
 			if !prev.At.IsZero() {
 				at := prev.At.UTC()
 				po.LastEnd.Start = &at
+			}
+			// What ended a start that was cut, where it is known.
+			if cause, ok := causes[d.Name]; ok && end == inside.EndCut && cause.Kind != "" {
+				at := cause.At.UTC()
+				po.LastEnd.Cause, po.LastEnd.CauseAt = cause.Kind, &at
 			}
 			o.Probe = po
 		}

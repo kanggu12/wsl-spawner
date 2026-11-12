@@ -6,6 +6,19 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+### Added
+
+- A start that ended without its time says what ended it, where it can tell: Windows did not shut down cleanly, WSL was
+  updated, Windows shut down or restarted, or you signed out, without wsl-spawner's stop; or it was stopped outside
+  wsl-spawner. The distribution's journal says when that start ended and how; Windows' System and Application logs, read
+  as any user may, say what happened then. `check` says it on a line after the cut, `status` and the screen after its
+  words, and `status --json` in `last_end`'s `cause` and `cause_at`.
+- `hook install` raises Windows' wait for the sign-out scripts where it is too short for `stop_limit`: to the limit, a
+  minute for WSL to end and a minute for each other sign-out script, PowerShell's too. It notes what was there;
+  `hook remove` and `uninstall` put it back, as long as it is still the wait it set and no other copy's hook stays.
+  `hook status` says it, and `hook status --json` has `max_wait_before_seconds`. `check`'s way out of a short wait names
+  `hook install`. A standard user's hook, an administrator's install, leaves the wait as it is.
+
 ## [0.1.2] - 2026-11-12
 
 Two reviews: of what crosses between users, between a distribution and Windows, and in the release pipeline; then of

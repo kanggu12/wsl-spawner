@@ -7,6 +7,9 @@ FROM ubuntu:24.04
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv dbus docker.io \
  && rm -rf /var/lib/apt/lists/*
+# The journal kept on disk, as Ubuntu's own WSL distribution keeps it: the
+# last lines of a start that was cut say when it ended, and how.
+RUN mkdir -p /var/log/journal
 # WSL starts systemd in it; Windows programs run in it, as by default.
 RUN printf '[boot]\nsystemd=true\n[interop]\nenabled=true\n' > /etc/wsl.conf
 # Docker makes no bridge and no firewall rules: every WSL 2 distribution

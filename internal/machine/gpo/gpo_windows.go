@@ -120,16 +120,179 @@ func Elevated() bool { return windows.GetCurrentProcessToken().IsElevated() }
 
 // MaxWait is how long Windows waits for the sign-out scripts, all together,
 // before it goes on: the policy's value, or its 600 seconds by default; 0
-// waits as long as they take.
+// waits as long as they take. A registry that cannot be read is Windows'
+// own default.
 func MaxWait() time.Duration {
-	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\Policies\Microsoft\Windows\System`, registry.QUERY_VALUE)
+	w, err := machine.Wait()
 	if err != nil {
-		return 600 * time.Second
+		return DefaultWait * time.Second
+	}
+	return time.Duration(w.Effective()) * time.Second
+}
+
+// The policy's wait, where Windows reads it, and wsl-spawner's note of a
+// wait it raised: values of a key of its own, which only administrators may
+// change, as the policy's.
+const (
+	policyKey   = `Software\Policies\Microsoft\Windows\System`
+	waitValue   = "MaxGPOScriptWait"
+	noteKey     = `Software\wsl-spawner`
+	raisedValue = "RaisedMaxGPOScriptWait"
+	beforeValue = "MaxGPOScriptWaitBefore"
+)
+
+// regStore is a WaitStore in the registry under root: the machine's on
+// this PC; a runner's test gives keys of its own.
+type regStore struct {
+	root         registry.Key
+	policy, note string
+}
+
+// machine is this PC's: what Windows reads.
+var machine = regStore{registry.LOCAL_MACHINE, policyKey, noteKey}
+
+// RaiseWait raises the policy's wait to seconds, and notes what was there
+// (Raise). It needs an administrator. A test never gets this far.
+func RaiseWait(seconds int) (Raised, error) {
+	if testing.Testing() {
+		return Raised{}, errNotInTests
+	}
+	return Raise(machine, seconds)
+}
+
+// PutBackWait puts back a wait wsl-spawner raised (PutBack). It needs an
+// administrator. A test never gets this far.
+func PutBackWait() (Wait, bool, error) {
+	if testing.Testing() {
+		return Wait{}, false, errNotInTests
+	}
+	return PutBack(machine)
+}
+
+// RaisedWait is the note of a wait wsl-spawner raised that is still the
+// one it set (StillRaised). Anyone may read it.
+func RaisedWait() (Raised, bool) { return StillRaised(machine) }
+
+// Wait reads the policy's wait: none set, where its key or value is not there.
+func (r regStore) Wait() (Wait, error) {
+	k, err := registry.OpenKey(r.root, r.policy, registry.QUERY_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return Wait{}, nil
+	}
+	if err != nil {
+		return Wait{}, err
 	}
 	defer k.Close()
-	v, _, err := k.GetIntegerValue("MaxGPOScriptWait")
-	if err != nil {
-		return 600 * time.Second
+	v, _, err := k.GetIntegerValue(waitValue)
+	if errors.Is(err, registry.ErrNotExist) {
+		return Wait{}, nil
 	}
-	return time.Duration(v) * time.Second
+	if err != nil {
+		return Wait{}, err
+	}
+	return Wait{Seconds: int(v), Set: true}, nil
+}
+
+// SetWait sets the policy's wait, as the policy's editor does, a number
+// of seconds; one not Set takes the value out, for Windows' own.
+func (r regStore) SetWait(w Wait) error {
+	if !w.Set {
+		return deleteValue(r.root, r.policy, waitValue)
+	}
+	k, _, err := registry.CreateKey(r.root, r.policy, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetDWordValue(waitValue, uint32(w.Seconds))
+}
+
+// Note reads wsl-spawner's note: none where its key or value is not there.
+// A Before not noted is a wait none set.
+func (r regStore) Note() (Raised, bool, error) {
+	k, err := registry.OpenKey(r.root, r.note, registry.QUERY_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return Raised{}, false, nil
+	}
+	if err != nil {
+		return Raised{}, false, err
+	}
+	defer k.Close()
+	to, _, err := k.GetIntegerValue(raisedValue)
+	if errors.Is(err, registry.ErrNotExist) {
+		return Raised{}, false, nil
+	}
+	if err != nil {
+		return Raised{}, false, err
+	}
+	n := Raised{To: int(to)}
+	switch before, _, err := k.GetIntegerValue(beforeValue); {
+	case err == nil:
+		n.Before = Wait{Seconds: int(before), Set: true}
+	case !errors.Is(err, registry.ErrNotExist):
+		return Raised{}, false, err
+	}
+	return n, true, nil
+}
+
+// SetNote writes wsl-spawner's note, or with nil takes it out, with its
+// key when nothing else is in it.
+func (r regStore) SetNote(n *Raised) error {
+	if n == nil {
+		if err := deleteValue(r.root, r.note, raisedValue); err != nil {
+			return err
+		}
+		if err := deleteValue(r.root, r.note, beforeValue); err != nil {
+			return err
+		}
+		return deleteEmptyKey(r.root, r.note)
+	}
+	k, _, err := registry.CreateKey(r.root, r.note, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	if err := k.SetDWordValue(raisedValue, uint32(n.To)); err != nil {
+		return err
+	}
+	if !n.Before.Set {
+		// None was set: nothing to note beside what wsl-spawner set.
+		return deleteValue(r.root, r.note, beforeValue)
+	}
+	return k.SetDWordValue(beforeValue, uint32(n.Before.Seconds))
+}
+
+// deleteValue takes a value out of the key at path; a key or a value that
+// is not there is taken out already.
+func deleteValue(root registry.Key, path, name string) error {
+	k, err := registry.OpenKey(root, path, registry.SET_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	if err := k.DeleteValue(name); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// deleteEmptyKey takes out the key at path when it holds nothing: one with
+// a value or a key of someone else's stays.
+func deleteEmptyKey(root registry.Key, path string) error {
+	k, err := registry.OpenKey(root, path, registry.QUERY_VALUE|registry.ENUMERATE_SUB_KEYS)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	info, err := k.Stat()
+	k.Close()
+	if err != nil || info.SubKeyCount > 0 || info.ValueCount > 0 {
+		return err
+	}
+	return registry.DeleteKey(root, path)
 }

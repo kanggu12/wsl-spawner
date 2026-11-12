@@ -8,9 +8,8 @@
 # other failure, or the same one twice, stops.
 set -u
 fuzztime=${1:-30s}
-# One package has fuzz targets now; another goes in this list.
-# shellcheck disable=SC2043
-for pkg in ./internal/engine/inside; do
+# The packages with fuzz targets; another goes in this list.
+for pkg in ./internal/engine/inside ./internal/machine/eventlog; do
   for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz'); do
     for try in 1 2; do
       out=$(go test -run '^$' -fuzz "^$target\$" -fuzztime "$fuzztime" "$pkg" 2>&1)

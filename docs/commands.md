@@ -76,8 +76,8 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 | Command | Does |
 |:---|:---|
 | `hook status [--json]` | whether the sign-out hook is installed and last, what runs at sign-out, and how long Windows waits |
-| `hook install [--yes]` | adds it, after every other sign-out script, or moves it last; Windows asks for an administrator. The program must be on a fixed disk, in a folder only you and administrators can write to |
-| `hook remove [--yes]` | takes it out; the other sign-out scripts stay |
+| `hook install [--yes]` | adds it, after every other sign-out script, or moves it last, and raises Windows' wait for the sign-out scripts where it is too short for `stop_limit`; Windows asks for an administrator. The program must be on a fixed disk, in a folder only you and administrators can write to |
+| `hook remove [--yes]` | takes it out, and puts back a wait `hook install` raised; the other sign-out scripts stay |
 
 ### setup
 
@@ -119,7 +119,7 @@ choice, and `q` quits; `esc` on the first page quits as well.
 | 0 | done |
 | 1 | failed, or the question was answered no |
 | 2 | asked wrong: a flag, a name WSL does not have or wsl-spawner leaves be, a question with no terminal and no `--yes` |
-| 3 | done, but not as it should be: a stop's step ran out of time or failed, or a distribution's stop ended in an error; a check with a `✗` finding; a `hook install` or `hook remove` Windows has not read yet |
+| 3 | done, but not as it should be: a stop's step ran out of time or failed, or a distribution's stop ended in an error; a check with a `✗` finding; a `hook install` or `hook remove` Windows has not read yet, or whose wait for the sign-out scripts stays as it was |
 
 ## JSON
 
@@ -129,13 +129,13 @@ Every `--json` output is one object that starts with `"schema": 1`; a later chan
 
 | Command | Holds |
 |:---|:---|
-| `status` | `wsl_version`, `stop_limit_seconds`, `resume`, and `distributions`: each `name`, `default`, `wsl`, `running`, `kind` (`set-up`, `stop-only`, `not-read` for one not running or not answering, `skipped`, `owned`, `wsl1`), `owner`, `at_logon`, `probe_error`, and for one that runs `probe` (with `probe_error` too when it was read in part): `systemd` (systemd's own word, `""` without it, `noanswer` when it runs but did not answer), `interop`, `kept_running`, `set_up`, `docker_live_restore`, `engines`, `containers` (`engine`, `id`, `name`, `state`, `restart_policy`, `stop_timeout_seconds`, `image`, `compose_project`, `auto_remove`), `engine_states` (each engine found: `up`, `down`, `asleep` for a Docker stopped by hand with its socket listening, `foreign` for a `docker` whose daemon is not the distribution's own), `hooks`, `stop_units` (those a stop takes: running now), `stop_units_skipped`, `failed_units`, `last_end` (`how`: `unknown`, `first`, `clean`, `limit`, `failed`, `cut`; `start`), `last_stop` (`at`, `took_seconds`, `result`, `by`), `to_bring_back`, `resumed` (`engine`, `name`, `what`), `resumed_at`, `complete` (`false` for a look cut off at its limit) |
+| `status` | `wsl_version`, `stop_limit_seconds`, `resume`, and `distributions`: each `name`, `default`, `wsl`, `running`, `kind` (`set-up`, `stop-only`, `not-read` for one not running or not answering, `skipped`, `owned`, `wsl1`), `owner`, `at_logon`, `probe_error`, and for one that runs `probe` (with `probe_error` too when it was read in part): `systemd` (systemd's own word, `""` without it, `noanswer` when it runs but did not answer), `interop`, `kept_running`, `set_up`, `docker_live_restore`, `engines`, `containers` (`engine`, `id`, `name`, `state`, `restart_policy`, `stop_timeout_seconds`, `image`, `compose_project`, `auto_remove`), `engine_states` (each engine found: `up`, `down`, `asleep` for a Docker stopped by hand with its socket listening, `foreign` for a `docker` whose daemon is not the distribution's own), `hooks`, `stop_units` (those a stop takes: running now), `stop_units_skipped`, `failed_units`, `last_end` (`how`: `unknown`, `first`, `clean`, `limit`, `failed`, `cut`; `start`; for a `cut` where it can tell, `cause`: `crash`, `update`, `shutdown`, `outside`, and `cause_at`), `last_stop` (`at`, `took_seconds`, `result`, `by`), `to_bring_back`, `resumed` (`engine`, `name`, `what`), `resumed_at`, `complete` (`false` for a look cut off at its limit) |
 | `stop` | `results`: each `name`, `result` (`clean`, `limit`, `failed`, `error`, or `busy` for one another stop is stopping, which that stop ends and records), `clean`, `took_seconds`, `steps` (`step`: `hook`, `units`, `docker`, `podman`, `sync`, or `record` when a file of the stop's own could not be written; `hook`, `count`, `code`, `took_seconds`), `error`; `shutdown`; `error`; `detached_from`, the distribution of the terminal a stop went on without |
 | `stop --events` | per line: `event` (`line`, `terminate`, `shutdown`, `finished`), `distro`, `done` once a `terminate` or `shutdown` ended, `error`; for a line `kind` (`plan`, `start`, `done`, `end`), `step`, `hook`, `count` on a `plan` or `start`, `code` and `took_seconds` on every `done`, 0 included, and `result` on the `end`; for `finished` the distribution's `result` and `took_seconds`. The results follow, as `--json` prints them |
 | `start` | `results`: each `name`, `result` (`started`, `running`, `error`), `error`, `came_back` (`engine`, `name`, `what`: `started`, `running`, `failed`, `exited`, `gone`) |
 | `set` | `name`, `changed`, `managed`, `keep`, `logon`, `skip` |
 | `check` | `worst` (`ok`, `warn`, `bad`) and `groups`: each `name`, `key`, `findings` (`mark`: `ok`, `info`, `warn`, `bad`; `key`, `text`, `do`, `args`, `do_key`, `do_args`) |
-| `hook status` | `installed`, `last`, `command`, `other_scripts`, `other_copies` (each `command`, `program`: `gone`, `there` or `unknown`, `before`), `powershell_scripts`, `powershell_first` (`true` before the others, `false` after, `null` when `psscripts.ini` does not say), `max_wait_seconds` (0: Windows waits as long as the scripts take) |
+| `hook status` | `installed`, `last`, `command`, `other_scripts`, `other_copies` (each `command`, `program`: `gone`, `there` or `unknown`, `before`), `powershell_scripts`, `powershell_first` (`true` before the others, `false` after, `null` when `psscripts.ini` does not say), `max_wait_seconds` (0: Windows waits as long as the scripts take), `max_wait_before_seconds` (where `hook install` raised it: what `hook remove` puts back) |
 | `history` | `entries`: each `at`, `took_seconds`, `what` (`stop`, `start`), `by` (`hand`, `signout`, `logon`), `shutdown`, `distributions` (`name`, `result`, `took_seconds`, `steps`, `error`), `error`, `version` |
 
 ## Environment

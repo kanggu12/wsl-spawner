@@ -214,10 +214,15 @@ func hookStatusCmd(p *apps) *cobra.Command {
 			// the others does not put it after, and their order.
 			h.readPowerShell(a.PC)
 			out, wait := cmd.OutOrStdout(), a.PC.MaxWait()
-			if asJSON {
-				return printJSON(out, hookJSON(h, wait))
+			// A wait hook install raised, and what remove puts back.
+			var raised *gpo.Raised
+			if r, ok := a.PC.Raised(); ok {
+				raised = &r
 			}
-			writeHook(out, lookFor(out), h, wait)
+			if asJSON {
+				return printJSON(out, hookJSON(h, wait, raised))
+			}
+			writeHook(out, lookFor(out), h, wait, raised)
 			return nil
 		},
 	}
@@ -225,8 +230,9 @@ func hookStatusCmd(p *apps) *cobra.Command {
 	return c
 }
 
-// writeHook says where the hook stands.
-func writeHook(out io.Writer, l look, h hookState, wait time.Duration) {
+// writeHook says where the hook stands; raised is the wait hook install
+// raised, nil for none.
+func writeHook(out io.Writer, l look, h hookState, wait time.Duration, raised *gpo.Raised) {
 	switch {
 	case h.last() && h.powerShellAfter():
 		// Last of the others: the PowerShell ones come after it, by
@@ -247,9 +253,12 @@ func writeHook(out io.Writer, l look, h hookState, wait time.Duration) {
 	if h.installed() {
 		fmt.Fprintln(out, l.muted("  runs: \""+h.Exe+"\" "+hookParams))
 	}
-	if wait > 0 {
+	switch {
+	case wait > 0 && raised != nil:
+		fmt.Fprintln(out, l.muted(fmt.Sprintf("  Windows waits up to %d s for the sign-out scripts, as wsl-spawner hook install raised it; hook remove puts back %d s", int(wait/time.Second), raised.Before.Effective())))
+	case wait > 0:
 		fmt.Fprintln(out, l.muted(fmt.Sprintf("  Windows waits up to %d s for the sign-out scripts", int(wait/time.Second))))
-	} else {
+	default:
 		fmt.Fprintln(out, l.muted("  Windows waits for the sign-out scripts as long as they take"))
 	}
 	for i, s := range h.Scripts {
@@ -308,10 +317,15 @@ func programState(c hookCopy) string {
 	return "unknown"
 }
 
-// hookJSON is the hook's state as JSON gives it.
-func hookJSON(h hookState, wait time.Duration) api.Hook {
+// hookJSON is the hook's state as JSON gives it; raised is the wait hook
+// install raised, nil for none.
+func hookJSON(h hookState, wait time.Duration, raised *gpo.Raised) api.Hook {
 	o := api.Hook{Schema: schema, Installed: h.installed(), Last: h.last(), Others: []string{}, Copies: []api.HookCopy{},
 		PowerShell: []string{}, PowerShellFirst: h.PowerShellFirst, MaxWait: int(wait / time.Second)}
+	if raised != nil {
+		before := raised.Before.Effective()
+		o.MaxWaitBefore = &before
+	}
 	if h.installed() {
 		o.Command = hookLine(h.Exe)
 	}
@@ -333,19 +347,22 @@ func hookJSON(h hookState, wait time.Duration) api.Hook {
 
 // hookChangeCmd is hook install (add true) or hook remove.
 func hookChangeCmd(p *apps, add bool) *cobra.Command {
-	var yes bool
+	var yes, wait bool
 	var report string
 	use, short := "remove", "Remove the sign-out hook"
 	long := "Takes wsl-spawner's sign-out script out of this PC's local Group Policy, with\n" +
-		"the sign-out scripts of copies of wsl-spawner that are gone. It needs an\n" +
-		"administrator: Windows asks.\n\n" + hookExits
+		"the sign-out scripts of copies of wsl-spawner that are gone, and puts back the\n" +
+		"wait for the sign-out scripts hook install raised. It needs an administrator:\n" +
+		"Windows asks.\n\n" + hookExits
 	if add {
 		use, short = "install", "Install the sign-out hook, the last sign-out script"
 		long = "Adds wsl-spawner's sign-out script to this PC's local Group Policy, after the\n" +
-			"other sign-out scripts, and has Windows read it. It needs an administrator:\n" +
-			"Windows asks. The hook runs for every user of the PC, as whoever signs out, so\n" +
-			"the program must be on a fixed disk of this PC, in a folder only you and\n" +
-			"administrators can write to, as its install script puts it.\n\n" + hookExits
+			"other sign-out scripts, and has Windows read it. Where Windows' wait for the\n" +
+			"sign-out scripts is too short for stop_limit, it raises it, and hook remove\n" +
+			"puts it back. It needs an administrator: Windows asks. The hook runs for every\n" +
+			"user of the PC, as whoever signs out, so the program must be on a fixed disk of\n" +
+			"this PC, in a folder only you and administrators can write to, as its install\n" +
+			"script puts it.\n\n" + hookExits
 	}
 	c := &cobra.Command{
 		Use:   use,
@@ -361,25 +378,37 @@ func hookChangeCmd(p *apps, add bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// What the hook's stop takes at most: Windows' wait for the
+			// sign-out scripts must hold it.
+			limit := time.Duration(a.Config.StopLimit) * time.Second
 			// The copy Windows started as an administrator, for the one
 			// that asked: it changes the policy and says how it went.
 			if report != "" {
-				return elevatedChange(a.PC, add, report)
+				return elevatedChange(a.PC, add, report, wait, limit)
 			}
-			return runHookChange(cmd, a.PC, add, yes)
+			return runHookChange(cmd, a.PC, add, yes, limit)
 		},
 	}
 	c.Flags().BoolVarP(&yes, "yes", "y", false, "change it without asking")
 	c.Flags().StringVar(&report, "report", "", "write how it went to this file: for the copy started as an administrator")
 	_ = c.Flags().MarkHidden("report")
+	// Asked by the copy that asked, which says it before the question: a
+	// standard user's, whose wait is the administrator's, does not ask.
+	waitWords := "put back the wait for the sign-out scripts hook install raised: for the copy started as an administrator"
+	if add {
+		waitWords = "raise Windows' wait for the sign-out scripts where it is too short: for the copy started as an administrator"
+	}
+	c.Flags().BoolVar(&wait, "wait", false, waitWords)
+	_ = c.Flags().MarkHidden("wait")
 	return c
 }
 
 // hookExits is what the exit codes of hook install and remove mean, for
 // their help.
 const hookExits = "Exit codes: 0 done, or nothing to change; 1 not done; 2 a mistake in the\n" +
-	"command line; 3 done in the policy's files, but Windows has not read it yet: it\n" +
-	"counts from Windows' next reading of your policy, as you sign in at the latest."
+	"command line; 3 done, but not as it should be: Windows has not read the policy's\n" +
+	"change yet, which counts from Windows' next reading of your policy, as you sign\n" +
+	"in at the latest; or Windows' wait for the sign-out scripts stays as it was."
 
 // gpeditLogoff is where the sign-out scripts are in the Local Group Policy
 // Editor, as the editor names each step: for a person to take one out, or
@@ -387,8 +416,10 @@ const hookExits = "Exit codes: 0 done, or nothing to change; 1 not done; 2 a mis
 const gpeditLogoff = "gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff"
 
 // runHookChange says what installing or removing the hook does, asks, and
-// does it, as an administrator.
-func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
+// does it, as an administrator. limit is stop_limit, which Windows' wait for
+// the sign-out scripts must hold: install raises a wait too short for it,
+// remove puts back one install raised.
+func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool, limit time.Duration) error {
 	out := cmd.OutOrStdout()
 	h, err := readHook(pc)
 	if err != nil {
@@ -410,11 +441,25 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	// The hooks of copies that are gone go with any change: they start
 	// nothing, and only wsl-spawner's own hook named them.
 	gone := h.gone()
+	files := h.filesChange(add)
+	// Windows' wait for the sign-out scripts: raised with the hook where it
+	// is too short for stop_limit, as check judges it; put back with it
+	// where install raised it. A standard user's hook is an administrator's
+	// install, whose wait is the administrator's: it is left as it is.
+	raiseTo, before := 0, 0
+	if add && !pc.IsStandardUser() {
+		// The PowerShell sign-out scripts share Windows' one wait.
+		h.readPowerShell(pc)
+		raiseTo, before = waitToRaise(pc, h, limit), int(pc.MaxWait()/time.Second)
+	}
+	// A raise stays while another copy's hook stays, which may need it.
+	raised, putBack := pc.Raised()
+	putBack = putBack && !add && !pc.IsStandardUser() && len(h.staying()) == 0
 	switch {
-	case add && h.last() && len(gone) == 0:
+	case add && !files && raiseTo == 0:
 		fmt.Fprintln(out, "the sign-out hook is installed, the last sign-out script: nothing to change")
 		return nil
-	case !add && !h.installed() && len(gone) == 0:
+	case !add && !files && !putBack:
 		fmt.Fprintln(out, "the sign-out hook is not installed: nothing to remove")
 		return nil
 	}
@@ -422,9 +467,11 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	// Windows reads it, is said before Windows asks for an administrator,
 	// who could do nothing with it either.
 	tryErr := error(nil)
-	if add {
+	switch {
+	case !files:
+	case add:
 		_, tryErr = gpo.WithHook(h.text, h.Exe, hookParams, gone...)
-	} else {
+	default:
 		_, tryErr = gpo.WithoutHook(h.text, h.Exe, gone...)
 	}
 	if tryErr != nil {
@@ -443,12 +490,22 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 		}
 	}
 	switch {
-	case add:
+	case add && files:
 		fmt.Fprintln(out, "Adds wsl-spawner as the last sign-out script in this PC's local Group Policy:")
 		fmt.Fprintln(out, "  as you sign out, and before every shutdown and restart, Windows runs it and waits;")
 		fmt.Fprintln(out, "  it stops every running distribution as wsl-spawner stop --all does, then WSL.")
+	case add:
+		fmt.Fprintln(out, "The sign-out hook is installed, the last sign-out script.")
 	case h.installed():
 		fmt.Fprintln(out, "Removes wsl-spawner's sign-out script from this PC's local Group Policy.")
+	}
+	if raiseTo > 0 {
+		fmt.Fprintf(out, "Raises how long Windows waits for the sign-out scripts, all of them, from %d s to %d s:\n", before, raiseTo)
+		fmt.Fprintf(out, "  stop_limit %d s, a minute for WSL to end, and a minute for each other sign-out script;\n", int(limit/time.Second))
+		fmt.Fprintln(out, "  wsl-spawner hook remove puts it back.")
+	}
+	if putBack {
+		fmt.Fprintf(out, "Puts back how long Windows waits for the sign-out scripts: %d s, as it was before wsl-spawner hook install raised it.\n", raised.Before.Effective())
 	}
 	sayCopies(out, h)
 	if !pc.Elevated() {
@@ -460,20 +517,25 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 	// What the change does, as the question and the end say it.
 	q, done := "Install the sign-out hook? [y/N] ", "sign-out hook installed"
 	switch {
+	case add && !files:
+		q, done = "Raise Windows' wait for the sign-out scripts? [y/N] ", "raised Windows' wait for the sign-out scripts"
 	case !add && h.installed():
 		q, done = "Remove the sign-out hook? [y/N] ", "sign-out hook removed"
-	case !add:
+	case !add && len(gone) > 0:
 		q, done = "Take out "+goneHooks(len(gone))+"? [y/N] ", "took out "+goneHooks(len(gone))
+	case !add:
+		q, done = "Put back Windows' wait for the sign-out scripts? [y/N] ", "put back Windows' wait for the sign-out scripts"
 	}
 	if !yes {
 		if err := confirm(cmd, q, "nothing changed"); err != nil {
 			return err
 		}
 	}
+	var wc waitChange
 	if pc.Elevated() {
-		err = change(pc, add, h.Exe, gone)
+		wc, err = changeHere(pc, add, h.Exe, gone, files, raiseTo, putBack)
 	} else {
-		err = changeAsAdmin(pc, add, run)
+		wc, err = changeAsAdmin(pc, add, run, files, raiseTo > 0 || putBack)
 	}
 	// How it went. In the policy's files, but not read by Windows yet: done,
 	// and not as it should be, which a script must tell from a clean end.
@@ -487,14 +549,146 @@ func runHookChange(cmd *cobra.Command, pc app.PC, add, yes bool) error {
 		// the start changes the files itself, with nothing to start.
 		return hint(fmt.Errorf("nothing changed: %w", ns.error), "in a terminal run as administrator, wsl-spawner hook "+hookVerb(add)+" changes it itself")
 	case errors.As(err, &nr) && add:
-		return attention{hint(fmt.Errorf("sign-out hook installed, but Windows has not read it yet: %w", nr.error), "it counts from Windows' next reading of your policy, as you sign in at the latest; "+refreshLine+" has Windows read it now")}
+		// The wait is Windows' to read when it waits: changed already, or
+		// why it is not, said with the hook's own.
+		sayWaitDone(out, wc)
+		return attention{hint(fmt.Errorf("sign-out hook installed, but Windows has not read it yet: %w%s", nr.error, waitTrouble(wc)), "it counts from Windows' next reading of your policy, as you sign in at the latest; "+refreshLine+" has Windows read it now")}
 	case errors.As(err, &nr) && h.installed():
-		return attention{hint(fmt.Errorf("sign-out hook removed, but Windows has not read that yet: %w", nr.error), "it still runs at sign-out until Windows next reads your policy, as you sign in at the latest; "+refreshLine+" has Windows read it now")}
+		sayWaitDone(out, wc)
+		return attention{hint(fmt.Errorf("sign-out hook removed, but Windows has not read that yet: %w%s", nr.error, waitTrouble(wc)), "it still runs at sign-out until Windows next reads your policy, as you sign in at the latest; "+refreshLine+" has Windows read it now")}
 	case err != nil && !errors.As(err, &nr):
 		return err
+	case !files && wc.err != nil:
+		// The wait was all there was to change, and it was not: not done.
+		return hint(fmt.Errorf("the wait Windows gives the sign-out scripts stays as it was: %w", wc.err), "wsl-spawner check says how long it is, and what it needs")
 	}
 	sayDone(out, done)
+	// The wait, after the hook: what it is now, or why it is not.
+	return sayWait(out, wc)
+}
+
+// waitTrouble is a wait that could not be changed, said after the hook's
+// own trouble: "" when there is none.
+func waitTrouble(wc waitChange) string {
+	if wc.err == nil {
+		return ""
+	}
+	return "; and the wait Windows gives the sign-out scripts stays as it was: " + firstLine(wc.err.Error())
+}
+
+// sayWaitDone says a wait that was changed, as sayWait does; one that could
+// not be is the caller's to say.
+func sayWaitDone(out io.Writer, wc waitChange) {
+	if wc.err == nil {
+		_ = sayWait(out, wc)
+	}
+}
+
+// filesChange reports whether installing (add) or removing the hook
+// changes the policy's files: not for a hook already the last, nor for none
+// to remove, where no copy's that is gone is there to take out either.
+func (h hookState) filesChange(add bool) bool {
+	if len(h.gone()) > 0 {
+		return true
+	}
+	if add {
+		return !h.last()
+	}
+	return h.installed()
+}
+
+// others counts the sign-out scripts that share Windows' one wait with this
+// copy's hook: every one in scripts.ini but itself, and but the hooks of
+// copies that are gone, which a change takes out; and the PowerShell ones
+// (readPowerShell), before it or after.
+func (h hookState) others() int {
+	n := len(h.Scripts) - len(h.gone())
+	if h.installed() {
+		n--
+	}
+	return max(n, 0) + len(h.PowerShell)
+}
+
+// waitToRaise is what install raises Windows' wait for the sign-out scripts
+// to, 0 for nothing: where it is too short for limit, as check judges it,
+// the hook needs stop_limit, a minute for WSL to end, and a minute for each
+// other sign-out script (gpo.WaitFor).
+func waitToRaise(pc app.PC, h hookState, limit time.Duration) int {
+	if !gpo.Short(int(pc.MaxWait()/time.Second), limit) {
+		return 0
+	}
+	return gpo.WaitFor(limit, h.others())
+}
+
+// waitChange is what a change of the hook did to Windows' wait for the
+// sign-out scripts: raised, put back, or nothing; err is a wait that could
+// not be changed, the hook's own change made.
+type waitChange struct {
+	raised *gpo.Raised
+	back   *gpo.Wait
+	err    error
+}
+
+// changeWait changes the wait as an administrator, after the hook: raised
+// to raiseTo (more than 0) for an install, put back for a removal asked to
+// (putBack) where install raised it.
+func changeWait(pc app.PC, add bool, raiseTo int, putBack bool) waitChange {
+	switch {
+	case add && raiseTo > 0:
+		// A made-up PC without one has nothing to raise.
+		if pc.RaiseWait == nil {
+			return waitChange{}
+		}
+		r, err := pc.RaiseWait(raiseTo)
+		if err != nil {
+			return waitChange{err: err}
+		}
+		return waitChange{raised: &r}
+	case !add && putBack && pc.PutBackWait != nil:
+		back, done, err := pc.PutBackWait()
+		switch {
+		case err != nil:
+			return waitChange{err: err}
+		case done:
+			return waitChange{back: &back}
+		}
+	}
+	return waitChange{}
+}
+
+// sayWait says what became of Windows' wait for the sign-out scripts, after
+// the hook's change: a wait that could not be changed is done, but not as it
+// should be.
+func sayWait(out io.Writer, wc waitChange) error {
+	l := lookFor(out)
+	switch {
+	case wc.err != nil:
+		return attention{hint(fmt.Errorf("the wait Windows gives the sign-out scripts stays as it was: %w", wc.err), "wsl-spawner check says how long it is, and what it needs")}
+	case wc.raised != nil:
+		fmt.Fprintln(out, l.muted(fmt.Sprintf("Windows waits up to %d s for the sign-out scripts now, where it waited %d s; wsl-spawner hook remove puts that back", wc.raised.To, wc.raised.Before.Effective())))
+	case wc.back != nil:
+		fmt.Fprintln(out, l.muted(fmt.Sprintf("Windows waits up to %d s for the sign-out scripts again, as before wsl-spawner hook install raised it", wc.back.Effective())))
+	}
 	return nil
+}
+
+// changeHere changes the hook in the policy's files, where files says it
+// changes, and Windows' wait after it (changeWait), as this process, an
+// administrator's; then has Windows read the files' change for the user
+// this process runs as. A change Windows did not read is a notRead.
+func changeHere(pc app.PC, add bool, exe string, drop []string, files bool, raiseTo int, putBack bool) (waitChange, error) {
+	if files {
+		if err := changeFiles(pc, add, exe, drop); err != nil {
+			return waitChange{}, err
+		}
+	}
+	wc := changeWait(pc, add, raiseTo, putBack)
+	if files {
+		if err := pc.Refresh(); err != nil {
+			return wc, notRead{err}
+		}
+	}
+	return wc, nil
 }
 
 // sayCopies says, before the question, what a change does with other
@@ -664,19 +858,6 @@ type notStarted struct{ error }
 // Unwrap gives why it could not start.
 func (n notStarted) Unwrap() error { return n.error }
 
-// change installs or removes the hook of exe, and takes out the hooks of
-// the programs drop names, as an administrator, and has Windows read it for
-// the user this process runs as: a change Windows did not read is a notRead.
-func change(pc app.PC, add bool, exe string, drop []string) error {
-	if err := changeFiles(pc, add, exe, drop); err != nil {
-		return err
-	}
-	if err := pc.Refresh(); err != nil {
-		return notRead{err}
-	}
-	return nil
-}
-
 // changeFiles installs or removes the hook of exe in the policy's files, and
 // takes out the hooks of the programs drop names, as an administrator, and
 // no more: what the copy Windows started as one does. Windows reads the
@@ -690,32 +871,42 @@ func changeFiles(pc app.PC, add bool, exe string, drop []string) error {
 
 // changeAsAdmin has the copy of this program at run (elevatedProgram)
 // change the hook as an administrator, Windows asking for the permission,
-// and reads how it went; then it has Windows read the change, as this
-// process: Windows takes in a sign-out script as it reads the policy of the
-// user who signs out, and an administrator whose name and password the
-// person typed is another user. A change Windows did not read is a notRead;
-// a copy Windows could not start, a notStarted.
-func changeAsAdmin(pc app.PC, add bool, run string) error {
+// and reads how it went; then, where files says the policy's files change,
+// it has Windows read the change, as this process: Windows takes in a
+// sign-out script as it reads the policy of the user who signs out, and an
+// administrator whose name and password the person typed is another user.
+// wait has the copy raise Windows' wait for the sign-out scripts where it
+// is too short, as it works it out again, or for a removal put back the one
+// install raised. A change Windows did not read is a notRead; a copy Windows
+// could not start, a notStarted.
+func changeAsAdmin(pc app.PC, add bool, run string, files, wait bool) (waitChange, error) {
 	// The empty file of its own the copy writes its answer into: the only
 	// kind it writes into (reportName, winapi.OpenReport).
 	f, err := os.CreateTemp("", "wsl-spawner-hook-*.txt")
 	if err != nil {
-		return err
+		return waitChange{}, err
 	}
 	path := f.Name()
 	f.Close()
 	defer os.Remove(path)
 	verb := hookVerb(add)
-	code, err := pc.RunElevated(run, []string{"hook", verb, "--yes", "--report", path})
+	args := []string{"hook", verb, "--yes", "--report", path}
+	if wait {
+		args = append(args, "--wait")
+	}
+	code, err := pc.RunElevated(run, args)
 	if errors.Is(err, winapi.ErrDeclined) {
-		return hint(fmt.Errorf("nothing changed: %w", errDeclined), "wsl-spawner hook "+verb+" asks again")
+		return waitChange{}, hint(fmt.Errorf("nothing changed: %w", errDeclined), "wsl-spawner hook "+verb+" asks again")
 	}
 	if err != nil {
-		return notStarted{err}
+		return waitChange{}, notStarted{err}
 	}
 	b, _ := os.ReadFile(path)
 	said := strings.TrimSpace(string(b))
-	if code != 0 || said != "ok" {
+	// The first line is how the hook went; after "ok", what became of the
+	// wait.
+	first, rest, _ := strings.Cut(said, "\n")
+	if code != 0 || strings.TrimSpace(first) != "ok" {
 		if said == "" {
 			said = "exit code " + strconv.Itoa(code)
 		}
@@ -723,14 +914,59 @@ func changeAsAdmin(pc app.PC, add bool, run string) error {
 		msg, what, _ := strings.Cut(said, "\n")
 		err := fmt.Errorf("the hook was not changed: %s", strings.TrimSpace(msg))
 		if what = strings.TrimSpace(what); what != "" {
-			return hint(err, what)
+			return waitChange{}, hint(err, what)
 		}
-		return err
+		return waitChange{}, err
 	}
-	if err := pc.Refresh(); err != nil {
-		return notRead{err}
+	wc := readWaitReport(rest)
+	if files {
+		if err := pc.Refresh(); err != nil {
+			return wc, notRead{err}
+		}
 	}
-	return nil
+	return wc, nil
+}
+
+// waitReport is the line the copy started as an administrator writes after
+// "ok" for what became of the wait: "wait raised TO BEFORE SET", "wait back
+// SECONDS SET" (SET 1 for a wait the policy sets, 0 for Windows' own), or
+// "wait error WHY".
+func waitReport(wc waitChange) string {
+	b := func(set bool) int {
+		if set {
+			return 1
+		}
+		return 0
+	}
+	switch {
+	case wc.err != nil:
+		return "wait error " + firstLine(wc.err.Error())
+	case wc.raised != nil:
+		return fmt.Sprintf("wait raised %d %d %d", wc.raised.To, wc.raised.Before.Seconds, b(wc.raised.Before.Set))
+	case wc.back != nil:
+		return fmt.Sprintf("wait back %d %d", wc.back.Seconds, b(wc.back.Set))
+	}
+	return ""
+}
+
+// readWaitReport reads waitReport's line back; anything else is nothing.
+func readWaitReport(s string) waitChange {
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		num := func(i int) int {
+			n, _ := strconv.Atoi(f[i])
+			return n
+		}
+		switch {
+		case len(f) >= 3 && f[0] == "wait" && f[1] == "error":
+			return waitChange{err: errors.New(strings.Join(f[2:], " "))}
+		case len(f) == 5 && f[0] == "wait" && f[1] == "raised":
+			return waitChange{raised: &gpo.Raised{To: num(2), Before: gpo.Wait{Seconds: num(3), Set: f[4] == "1"}}}
+		case len(f) == 4 && f[0] == "wait" && f[1] == "back":
+			return waitChange{back: &gpo.Wait{Seconds: num(2), Set: f[3] == "1"}}
+		}
+	}
+	return waitChange{}
 }
 
 // errDeclined is a no to Windows' question for an administrator's
@@ -742,13 +978,17 @@ var errDeclined = errors.New("the administrator's permission was not given")
 var reportName = regexp.MustCompile(`^wsl-spawner-hook-[0-9]+\.txt$`)
 
 // elevatedChange is the administrator's copy: it changes the hook in the
-// policy's files and writes "ok" or what went wrong into report. Windows'
-// reading of the change is the one that asked's, as the user who signs out.
-// It writes only into an empty file of its own named as changeAsAdmin names
-// it, checked before anything changes: any program may start this copy
-// with a path of its choosing, and Windows would run it as an administrator
-// if the person said yes.
-func elevatedChange(pc app.PC, add bool, report string) error {
+// policy's files, where they change, and Windows' wait for the sign-out
+// scripts after it, and writes "ok" or what went wrong into report, then
+// what became of the wait (waitReport). wait has it raise a wait too short
+// for limit, worked out here again, or for a removal put back one install
+// raised.
+// Windows' reading of the change is the one that asked's, as the user who
+// signs out. It writes only into an empty file of its own named as
+// changeAsAdmin names it, checked before anything changes: any program may
+// start this copy with a path of its choosing, and Windows would run it as
+// an administrator if the person said yes.
+func elevatedChange(pc app.PC, add bool, report string, wait bool, limit time.Duration) error {
 	if !reportName.MatchString(filepath.Base(report)) {
 		return fmt.Errorf("%w: --report takes the file wsl-spawner makes for the answer, not %s", errUsage, report)
 	}
@@ -774,7 +1014,9 @@ func elevatedChange(pc app.PC, add bool, report string) error {
 	if err == nil && add {
 		err = nobodyElseChanges(pc, h.Exe)
 	}
-	if err == nil {
+	// The files change where they do: a hook already the last, with no
+	// copy's to take out, stays as it is, for a raise of the wait alone.
+	if err == nil && h.filesChange(add) {
 		err = changeFiles(pc, add, h.Exe, h.gone())
 	}
 	said := "ok"
@@ -785,6 +1027,18 @@ func elevatedChange(pc app.PC, add bool, report string) error {
 		said = msg
 		if what != "" {
 			said += "\n" + what
+		}
+	} else {
+		// The wait, after the hook: raised where it is asked to and too
+		// short, put back where install raised it.
+		raiseTo := 0
+		if add && wait {
+			h.readPowerShell(pc)
+			raiseTo = waitToRaise(pc, h, limit)
+		}
+		// A raise stays while another copy's hook stays, which may need it.
+		if line := waitReport(changeWait(pc, add, raiseTo, !add && wait && len(h.staying()) == 0)); line != "" {
+			said += "\n" + line
 		}
 	}
 	if _, werr := w.WriteString(said + "\n"); werr != nil && err == nil {

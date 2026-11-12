@@ -33,7 +33,8 @@ distributions are always left to those tools.
 
 `stop_limit` is for each distribution, and they stop at the same time. The sign-out hook has as long as Windows waits
 for all the sign-out scripts together, 600 seconds by default, less what the scripts before it take;
-`wsl-spawner check` says when the limit and a minute are more than that.
+`wsl-spawner check` says when the limit and a minute are more than that, and `wsl-spawner hook install` raises it to
+fit ([how](how-it-works.md#the-sign-out-hook)).
 
 ## Inside a distribution
 

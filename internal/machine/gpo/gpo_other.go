@@ -33,4 +33,13 @@ func Refresh() error { return errNotWindows }
 func Elevated() bool { return false }
 
 // MaxWait is Windows' default off it.
-func MaxWait() time.Duration { return 600 * time.Second }
+func MaxWait() time.Duration { return DefaultWait * time.Second }
+
+// RaiseWait fails off Windows: there is no policy to change.
+func RaiseWait(int) (Raised, error) { return Raised{}, errNotWindows }
+
+// PutBackWait fails off Windows.
+func PutBackWait() (Wait, bool, error) { return Wait{}, false, errNotWindows }
+
+// RaisedWait is none off Windows.
+func RaisedWait() (Raised, bool) { return Raised{}, false }

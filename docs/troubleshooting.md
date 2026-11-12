@@ -40,6 +40,13 @@ seconds WSL gives. Something stopped WSL without a sign-out: an update of WSL, `
 typed by hand, a crash, or a sign-out with no hook. `wsl-spawner hook install` covers sign-out, shutdown and restart;
 stop it with `wsl-spawner stop` before stopping WSL by hand.
 
+Where it can tell, the line after says what it was, and when: Windows did not shut down cleanly (a crash, a hang or a
+power cut), WSL was updated, Windows shut down or restarted, or you signed out, without wsl-spawner's stop; or it was
+stopped outside wsl-spawner. The distribution's journal says when that start ended, and how: asked to power off, as WSL
+asks, or without a word. Windows' System and Application logs say what happened then, which anyone signed in at the PC
+may read. A distribution whose journal does not keep the last start (one kept in memory only, or none) says nothing
+more. It is a hint, not proof: any program you run may write an event of Windows Installer's.
+
 ## The sign-out hook did not run
 
 - `wsl-spawner hook status` says whether it is there and last. Another sign-out script after it runs once WSL has
@@ -55,7 +62,8 @@ stop it with `wsl-spawner stop` before stopping WSL by hand.
   distribution. The hook also needs it where only you and administrators can write: `hook install` names who else may
   change the program or a folder above it, and `icacls FOLDER` shows the permissions to take away. A standard user's
   hook is an administrator's install: [For a standard user](setup.md#for-a-standard-user).
-- Windows waits for the sign-out scripts up to its policy's limit; past that, it goes on without them.
+- Windows waits for the sign-out scripts up to its policy's limit; past that, it goes on without them. `check` says
+  when it is too short for `stop_limit`, and `hook install` raises it; a domain's policy may set it back.
 - On Windows Home, the local Group Policy's sign-out scripts may not run.
 - `wsl-spawner history` lists each stop by sign-out: none after a sign-out means the hook did not run. One that says
   the settings did not load stopped with the defaults: `wsl-spawner status` names what to put right.

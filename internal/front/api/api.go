@@ -97,6 +97,15 @@ type (
 	End struct {
 		How   string     `json:"how"`
 		Start *time.Time `json:"start"`
+		// Cause is what ended a start that was cut, as the
+		// distribution's journal and Windows' event logs tell it together:
+		// "crash" (Windows did not shut down cleanly), "update" (WSL was
+		// updated), "shutdown" (Windows shut down or restarted), "signout"
+		// (the person signed out) or "outside" (WSL was stopped outside
+		// wsl-spawner); absent when they do not tell. CauseAt is when it
+		// happened.
+		Cause   string     `json:"cause,omitempty"`
+		CauseAt *time.Time `json:"cause_at,omitempty"`
 	}
 )
 
@@ -225,6 +234,10 @@ type Hook struct {
 	PowerShell      []string   `json:"powershell_scripts"`
 	PowerShellFirst *bool      `json:"powershell_first"`
 	MaxWait         int        `json:"max_wait_seconds"`
+	// MaxWaitBefore is, where wsl-spawner hook install raised that wait and
+	// it is still the one it set, what Windows waited before, which hook
+	// remove puts back; absent otherwise.
+	MaxWaitBefore *int `json:"max_wait_before_seconds,omitempty"`
 }
 
 // HookCopy is another copy's sign-out hook, as a moved install or a second

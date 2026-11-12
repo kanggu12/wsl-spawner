@@ -179,7 +179,7 @@ user's engine, rootless Podman's or rootless Docker's, are not seen, stopped or 
 **What about WSL 1?** A WSL 1 distribution has no VM and no systemd, nothing to give time to: it is listed, and left be.
 
 **What if WSL updates itself?** An update stops WSL without a sign-out. wsl-spawner cannot run first then; `status`
-and `check` say next time that the start ended without its time.
+and `check` say next time that the start ended without its time, and that an update of WSL ended it.
 
 **How do I remove it?** `wsl-spawner uninstall`, in PowerShell or WSL. It takes out the hook, the sign-in program and
 what it set up in the running distributions first. `--purge` removes the settings and the history too.

@@ -28,6 +28,19 @@ var en = map[string]string{
 	"end.cut":     "ended without its time",
 	"end.since":   "(the start of %s)",
 
+	// What ended a start that was cut, after its words: short in a table,
+	// whole in the details.
+	"end.cause.crash":      "unclean shutdown",
+	"end.cause.update":     "WSL update",
+	"end.cause.shutdown":   "Windows shutdown",
+	"end.cause.outside":    "stopped outside",
+	"end.cause.signout":    "sign-out",
+	"end.because.crash":    "Windows did not shut down cleanly",
+	"end.because.update":   "WSL was updated",
+	"end.because.shutdown": "Windows shut down or restarted",
+	"end.because.outside":  "stopped outside wsl-spawner",
+	"end.because.signout":  "signed out of Windows",
+
 	"yes": "yes",
 	"no":  "no",
 
@@ -58,6 +71,7 @@ var en = map[string]string{
 	"check.wait.enough":           "Windows waits up to %d s for the sign-out scripts, enough for stop_limit %d s",
 	"check.wait.short":            "Windows waits up to %d s for the sign-out scripts, less than stop_limit %d s and a minute",
 	"check.wait.do":               "lower stop_limit in the settings, or raise the policy Specify maximum wait time for Group Policy scripts",
+	"check.wait.do.install":       "wsl-spawner hook install raises it to fit, or lower stop_limit in the settings",
 
 	"check.d.owned":          "left to %s, which stops and starts it",
 	"check.d.wsl1":           "WSL 1: no VM and no systemd, nothing to give time to",
@@ -109,6 +123,13 @@ var en = map[string]string{
 	"check.d.notback":        "did not come back at its last start: %s (%s)",
 	"check.d.clock":          "its clock is %d s off Windows'",
 	"check.d.do.clock":       "stop and start it: wsl-spawner stop %s",
+
+	// What ended a start that was cut, where its journal and Windows' logs tell it.
+	"check.d.end.cause.crash":    "Windows did not shut down cleanly at %s: a crash, a hang or a power cut",
+	"check.d.end.cause.update":   "WSL was updated at %s, which ends every distribution",
+	"check.d.end.cause.shutdown": "Windows shut down or restarted at %s without wsl-spawner's stop",
+	"check.d.end.cause.outside":  "it was stopped at %s outside wsl-spawner: by wsl --shutdown, wsl --terminate or WSL itself",
+	"check.d.end.cause.signout":  "signed out of Windows at %s without wsl-spawner's stop",
 
 	"check.s.unread":      "the sign-in programs could not be read: %s",
 	"check.s.leftover":    "wsl-spawner's sign-in program is there, though nothing starts at sign-in",
@@ -424,6 +445,17 @@ var ko = map[string]string{
 	"end.cut":     "시간 없이 끝남",
 	"end.since":   "(%s에 시작한 실행)",
 
+	"end.cause.crash":      "비정상 종료",
+	"end.cause.update":     "WSL 업데이트",
+	"end.cause.shutdown":   "Windows 종료",
+	"end.cause.outside":    "밖에서 멈춤",
+	"end.cause.signout":    "로그아웃",
+	"end.because.crash":    "Windows가 정상 종료되지 않음",
+	"end.because.update":   "WSL이 업데이트됨",
+	"end.because.shutdown": "Windows가 종료되거나 재시작됨",
+	"end.because.outside":  "wsl-spawner 밖에서 멈춤",
+	"end.because.signout":  "Windows에서 로그아웃함",
+
 	"yes": "예",
 	"no":  "아니요",
 
@@ -453,6 +485,7 @@ var ko = map[string]string{
 	"check.wait.enough":           "Windows가 로그오프 스크립트를 최대 %d초 기다림, stop_limit %d초에 충분",
 	"check.wait.short":            "Windows가 로그오프 스크립트를 최대 %d초 기다림, stop_limit %d초와 1분보다 짧음",
 	"check.wait.do":               "설정의 stop_limit을 낮추거나, 정책 '그룹 정책 스크립트의 최대 대기 시간 지정'을 늘리기",
+	"check.wait.do.install":       "wsl-spawner hook install이 맞게 늘림, 또는 설정의 stop_limit을 낮추기",
 
 	"check.d.owned":          "%s에 맡김: 그 도구가 멈추고 켬",
 	"check.d.wsl1":           "WSL 1: VM도 systemd도 없어 시간을 줄 것이 없음",
@@ -504,6 +537,12 @@ var ko = map[string]string{
 	"check.d.notback":        "지난 시작 때 돌아오지 않음: %s (%s)",
 	"check.d.clock":          "시계가 Windows와 %d초 어긋남",
 	"check.d.do.clock":       "멈췄다 켜기: wsl-spawner stop %s",
+
+	"check.d.end.cause.crash":    "%s에 Windows가 정상 종료되지 않음: 멈춤, 충돌, 전원 끊김",
+	"check.d.end.cause.update":   "%s에 WSL이 업데이트됨: 업데이트는 모든 배포판을 끝냄",
+	"check.d.end.cause.shutdown": "%s에 Windows가 wsl-spawner의 멈춤 없이 종료되거나 재시작됨",
+	"check.d.end.cause.outside":  "%s에 wsl-spawner 밖에서 멈춤: wsl --shutdown, wsl --terminate 또는 WSL 자체",
+	"check.d.end.cause.signout":  "%s에 wsl-spawner의 멈춤 없이 Windows에서 로그아웃함",
 
 	"check.s.unread":      "로그인 프로그램을 읽지 못함: %s",
 	"check.s.leftover":    "로그인 때 켤 배포판이 없는데 wsl-spawner의 로그인 프로그램이 남아 있음",

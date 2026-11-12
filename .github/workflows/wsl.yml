@@ -175,8 +175,11 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
+          # When the cut was, on Windows' clock, for what the next look says.
+          $before = [datetime]::UtcNow
           wsl.exe --terminate $env:LAB
           if ($LASTEXITCODE -ne 0) { "wsl --terminate exited $LASTEXITCODE"; exit 1 }
+          $after = [datetime]::UtcNow
           $up = $false
           foreach ($i in 1..90) {
             $s = (wsl.exe -d $env:LAB -u root -- systemctl is-system-running) -join ''
@@ -189,9 +192,45 @@ jobs:
           if (@($log | Where-Object { $_ -eq 'stopped' }).Count -ne 1) { "WSL let the service's stop run to its end: the 40 seconds no longer show what WSL cuts"; exit 1 }
           $d = (./dist/wsl-spawner.exe status --json | ConvertFrom-Json).distributions | Where-Object name -eq $env:LAB
           if ($d.probe.last_end.how -ne 'cut') { $d.probe | ConvertTo-Json -Depth 6; "the last start ended $($d.probe.last_end.how), not cut"; exit 1 }
+          # What ended it: wsl --terminate, outside wsl-spawner, with no event
+          # of Windows' about it; an update of WSL at the job's start was over
+          # long before. Outside is also what nothing that fits says: the
+          # moment, the journal's, must be the terminate's.
+          "the cut's cause: $($d.probe.last_end.cause) at $($d.probe.last_end.cause_at), the terminate from $($before.ToString('o')) to $($after.ToString('o'))"
+          if ($d.probe.last_end.cause -ne 'outside') { $d.probe.last_end | ConvertTo-Json; "the cut is not said as stopped outside wsl-spawner"; exit 1 }
+          $at = ([datetime]$d.probe.last_end.cause_at).ToUniversalTime()
+          if ($at -lt $before.AddSeconds(-5) -or $at -gt $after.AddSeconds(5)) { 'the moment of the cut is not the terminate'; exit 1 }
           # The check says it too; it exits 3 for a finding marked bad.
           ./dist/wsl-spawner.exe check
           if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) { "check exited $LASTEXITCODE"; exit 1 }
+          exit 0
+      - name: an update of WSL cuts the lab, and the next look names it
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Windows Installer's events of an install of WSL, written around a
+          # terminate as an update's are: begun before WSL stops, ended after.
+          # Any program may write them: what is checked is the reading of the
+          # logs and the matching, with Windows' own event log.
+          $log = { param($id, $text) [Diagnostics.EventLog]::WriteEntry('MsiInstaller', $text, [Diagnostics.EventLogEntryType]::Information, $id) }
+          & $log 1040 'C:\Windows\Temp\wsl.9.9.9.0.x64.msi'
+          $begun = [datetime]::UtcNow
+          wsl.exe --terminate $env:LAB
+          if ($LASTEXITCODE -ne 0) { "wsl --terminate exited $LASTEXITCODE"; exit 1 }
+          Start-Sleep -Seconds 2
+          & $log 1033 'Windows Subsystem for Linux'
+          $up = $false
+          foreach ($i in 1..90) {
+            $s = (wsl.exe -d $env:LAB -u root -- systemctl is-system-running) -join ''
+            if ($s -match 'running|degraded') { $up = $true; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $up) { 'systemd did not start in the lab again'; exit 1 }
+          $d = (./dist/wsl-spawner.exe status --json | ConvertFrom-Json).distributions | Where-Object name -eq $env:LAB
+          "the cut's cause: $($d.probe.last_end.cause) at $($d.probe.last_end.cause_at)"
+          if ($d.probe.last_end.how -ne 'cut' -or $d.probe.last_end.cause -ne 'update') { $d.probe.last_end | ConvertTo-Json; 'the update is not said as what cut the lab'; exit 1 }
+          $at = ([datetime]$d.probe.last_end.cause_at).ToUniversalTime()
+          if ($at -gt $begun.AddSeconds(5) -or $at -lt $begun.AddSeconds(-30)) { 'the update is not said at its first event'; exit 1 }
           exit 0
       - name: the sign-out hook, installed, run as Windows runs it, and removed
         shell: pwsh
@@ -297,6 +336,42 @@ jobs:
           $code = $LASTEXITCODE
           if ($code -ne 0 -and $code -ne 3) { "hook remove exited $code"; exit 1 }
           if ((& "$dir\wsl-spawner.exe" hook status --json | ConvertFrom-Json).installed) { 'the hook is still installed'; exit 1 }
+          exit 0
+      - name: hook install raises a wait too short for stop_limit, and remove puts it back
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # The program where the hook may start it, with settings of its
+          # own: stop_limit 900 s, which Windows' own 600 s wait does not
+          # hold with a minute for WSL to end.
+          $dir = Join-Path $env:ProgramFiles 'wsl-spawner ci'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item dist/wsl-spawner.exe, dist/wsl-spawnerw.exe $dir -Force
+          $env:APPDATA = $env:LOCALAPPDATA = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'wsp-wait') -Force).FullName
+          New-Item -ItemType Directory -Path (Join-Path $env:APPDATA 'wsl-spawner') -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $env:APPDATA 'wsl-spawner\config.toml') -Value 'stop_limit = 900'
+          $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+          $wait = { (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).MaxGPOScriptWait }
+          $before = & $wait
+          "MaxGPOScriptWait before: $(if ($null -eq $before) { 'none (600 s)' } else { $before })"
+          if ($null -ne $before) { 'this runner sets the wait already: put back would not show'; exit 1 }
+          & "$dir\wsl-spawner.exe" hook install --yes
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -and $code -ne 3) { "hook install exited $code"; exit 1 }
+          # stop_limit, a minute for WSL to end, and one for each other
+          # sign-out script.
+          $h = & "$dir\wsl-spawner.exe" hook status --json | ConvertFrom-Json
+          $want = 960 + 60 * @($h.other_scripts).Count
+          $after = & $wait
+          "MaxGPOScriptWait after install: $after"
+          if ($after -ne $want) { "not $want s"; exit 1 }
+          if ($h.max_wait_seconds -ne $want -or $h.max_wait_before_seconds -ne 600) { $h | ConvertTo-Json; 'hook status does not say the raise'; exit 1 }
+          & "$dir\wsl-spawner.exe" hook remove --yes
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -and $code -ne 3) { "hook remove exited $code"; exit 1 }
+          $back = & $wait
+          if ($null -ne $back) { "MaxGPOScriptWait after remove: $back, not taken out"; exit 1 }
+          if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\wsl-spawner') { "wsl-spawner's note of the wait stays"; exit 1 }
           exit 0
       - name: the start at sign-in, added, run as Windows runs it, and removed
         shell: pwsh

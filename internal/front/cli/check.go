@@ -96,6 +96,8 @@ func checkInputs(ctx context.Context, a *app.App) (check.Inputs, error) {
 	}
 	in.Excluded, in.ExcludedErr = excludedPorts(a.PC)
 	in.LastStops = lastStops(a)
+	// What ended each start that was cut, where it can be told.
+	in.Causes = cutCauses(ctx, a, ds)
 	return in, nil
 }
 

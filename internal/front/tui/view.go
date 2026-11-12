@@ -555,12 +555,26 @@ func (m model) endPieces(d api.Distro, long bool) []piece {
 			out = append(out, when(p.LastStop.At, p.LastStop.Took, p.LastStop.By)...)
 		}
 	case "cut":
-		if p.LastEnd.Start != nil {
+		// What ended it, and when, where its journal and Windows' logs
+		// tell it; else when the start it ended began.
+		if c := p.LastEnd; causeKinds[c.Cause] && c.CauseAt != nil {
+			// Short in the table, whole in the details.
+			words := "end.cause."
+			if long {
+				words = "end.because."
+			}
+			out = append(out, piece{": " + i18n.T(words+c.Cause), ui.Fg(t.Muted), false},
+				piece{" " + c.CauseAt.Local().Format("01-02 15:04"), ui.Fg(t.Muted), true})
+		} else if p.LastEnd.Start != nil {
 			out = append(out, piece{" " + i18n.T("end.since", p.LastEnd.Start.Local().Format("01-02 15:04")), ui.Fg(t.Muted), false})
 		}
 	}
 	return out
 }
+
+// causeKinds are the causes of a cut the screen has words for: one from a
+// later program's JSON it does not know is not said.
+var causeKinds = map[string]bool{"crash": true, "update": true, "shutdown": true, "signout": true, "outside": true}
 
 // piece is a run of words in one style: what a row that wraps is made of.
 // whole keeps it on one line, as a time is: a space before it is still

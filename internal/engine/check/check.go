@@ -145,6 +145,10 @@ type Inputs struct {
 	// name, as the history has them: said where nothing inside one notes
 	// how its last start ended.
 	LastStops map[string]LastStop
+	// Causes say, by a distribution's name, what ended its last start
+	// where wsl-spawner did not stop it, as its journal and Windows' event
+	// logs tell it together; one they do not tell is not there.
+	Causes map[string]inside.Cause
 	// Excluded are the ports Windows keeps, and why they could not be read.
 	Excluded    []PortRange
 	ExcludedErr error
@@ -218,10 +222,24 @@ func stopping(in Inputs) Group {
 		case h.MaxWait >= limit+time.Minute:
 			g.Items = append(g.Items, Item{Mark: OK, Key: "check.wait.enough", Args: []any{secs(h.MaxWait), secs(limit)}})
 		default:
-			g.Items = append(g.Items, Item{Mark: Warn, Key: "check.wait.short", Args: []any{secs(h.MaxWait), secs(limit)}, Do: "check.wait.do"})
+			// hook install raises it; a standard user's hook is an
+			// administrator's install, whose wait is theirs to raise.
+			do := "check.wait.do.install"
+			if h.Standard {
+				do = "check.wait.do"
+			}
+			g.Items = append(g.Items, Item{Mark: Warn, Key: "check.wait.short", Args: []any{secs(h.MaxWait), secs(limit)}, Do: do})
 		}
 	}
 	return g
+}
+
+// causeKeys are the words of what ended a start that was cut, by its kind:
+// one the check has no words for says nothing.
+var causeKeys = map[string]string{
+	"crash": "check.d.end.cause.crash", "update": "check.d.end.cause.update",
+	"shutdown": "check.d.end.cause.shutdown", "signout": "check.d.end.cause.signout",
+	inside.CauseOutside: "check.d.end.cause.outside",
 }
 
 // distro is what one distribution's stop and start stand on.
@@ -316,6 +334,11 @@ func distro(in Inputs, d distros.Distro) Group {
 		add(Item{Mark: Warn, Key: "check.d.end.failed", Args: []any{stamp(p.LastStop.At)}, Do: "check.d.do.history"})
 	case inside.EndCut:
 		add(Item{Mark: Bad, Key: "check.d.end.cut", Args: []any{stamp(prev.At)}, Do: "check.d.do.cut"})
+		// What ended it, where the journal and Windows' logs tell it: said
+		// on a line of its own, so the finding above stays as it was.
+		if key, ok := causeKeys[in.Causes[d.Name].Kind]; ok {
+			add(Item{Mark: Info, Key: key, Args: []any{stamp(in.Causes[d.Name].At)}})
+		}
 	case inside.EndFirst:
 		add(Item{Mark: Info, Key: "check.d.end.first"})
 		fromHistory()

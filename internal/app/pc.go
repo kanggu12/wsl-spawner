@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/kanggu12/wsl-spawner/internal/machine/eventlog"
 	"github.com/kanggu12/wsl-spawner/internal/machine/gpo"
 	"github.com/kanggu12/wsl-spawner/internal/machine/winapi"
 )
@@ -38,6 +39,14 @@ type PC struct {
 	RunElevated func(exe string, args []string) (int, error)
 	// MaxWait is how long Windows waits for the sign-out scripts.
 	MaxWait func() time.Duration
+	// RaiseWait raises that wait to so many seconds, noting what was
+	// there; PutBackWait puts back the wait RaiseWait raised, where it is
+	// still the one it set, and says what Windows waits then and whether
+	// it changed. Both need an administrator. RaisedWait is RaiseWait's
+	// note of a wait it raised that is still the one it set.
+	RaiseWait   func(seconds int) (gpo.Raised, error)
+	PutBackWait func() (gpo.Wait, bool, error)
+	RaisedWait  func() (gpo.Raised, bool)
 	// LogonEntry, SetLogonEntry and DeleteLogonEntry read and change a
 	// program Windows starts at sign-in.
 	LogonEntry       func(name string) (command string, ok, off bool, err error)
@@ -71,6 +80,10 @@ type PC struct {
 	HomeDir  func() (string, error)
 	// ExcludedPorts is what netsh lists of the ports Windows keeps.
 	ExcludedPorts func(proto string) (string, error)
+	// Endings reads what Windows' event logs say ended WSL's
+	// distributions between two moments: crashes, updates of WSL,
+	// shutdowns and restarts. It only reads, as anyone signed in may.
+	Endings func(from, to time.Time) ([]eventlog.Ending, error)
 	// StartDetached starts this program again on its own.
 	StartDetached func(args []string) error
 	// TerminalDistro is the distribution the terminal this runs from is in,
@@ -120,6 +133,27 @@ func (pc PC) OnFixedDisk(path string) bool {
 	return pc.FixedDisk(path)
 }
 
+// Raised is RaisedWait; a made-up PC without one, as the demo's, raised
+// no wait.
+func (pc PC) Raised() (gpo.Raised, bool) {
+	if pc.RaisedWait == nil {
+		return gpo.Raised{}, false
+	}
+	return pc.RaisedWait()
+}
+
+// errNoLogs is a made-up PC's answer, as the demo's: it has no event logs.
+var errNoLogs = errors.New("this PC has no event logs to read")
+
+// EndingsBetween is Endings; a made-up PC without one, as the demo's, has
+// no event logs, and tells no ending.
+func (pc PC) EndingsBetween(from, to time.Time) ([]eventlog.Ending, error) {
+	if pc.Endings == nil {
+		return nil, errNoLogs
+	}
+	return pc.Endings(from, to)
+}
+
 // IsStandardUser is StandardUser; a made-up PC without one, as the demo's,
 // has an administrator at it.
 func (pc PC) IsStandardUser() bool { return pc.StandardUser != nil && pc.StandardUser() }
@@ -162,6 +196,7 @@ func RealPC() PC {
 		ReadScripts: gpo.ReadScripts, ReadPowerShellScripts: gpo.ReadPowerShellScripts,
 		InstallHook: gpo.Install, UninstallHook: gpo.Uninstall, RefreshPolicy: gpo.Refresh,
 		Elevated: gpo.Elevated, RunElevated: winapi.RunElevated, MaxWait: gpo.MaxWait,
+		RaiseWait: gpo.RaiseWait, PutBackWait: gpo.PutBackWait, RaisedWait: gpo.RaisedWait,
 		LogonEntry: winapi.LogonEntry, SetLogonEntry: winapi.SetLogonEntry, DeleteLogonEntry: winapi.DeleteLogonEntry,
 		QuietExe: func() (string, error) {
 			self, err := os.Executable()
@@ -182,6 +217,7 @@ func RealPC() PC {
 			return err
 		},
 		ReadFile: os.ReadFile, HomeDir: os.UserHomeDir, ExcludedPorts: winapi.ExcludedPorts,
+		Endings:       eventlog.EndingsBetween,
 		StartDetached: winapi.StartDetached,
 		// The launcher passes the distribution of the terminal it runs in.
 		TerminalDistro: func() string { return os.Getenv("WSL_DISTRO_NAME") },

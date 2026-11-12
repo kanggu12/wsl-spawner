@@ -6,6 +6,11 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+What ended a start that was cut, Windows' wait raised for the sign-out hook, a new look for the screen and setup, and
+documents with pictures.
+
 ### Added
 
 - A start that ended without its time says what ended it, where it can tell: Windows did not shut down cleanly, WSL was
@@ -18,6 +23,33 @@ that only fixes raises the patch number. Each release's section here is its rele
   `hook remove` and `uninstall` put it back, as long as it is still the wait it set and no other copy's hook stays.
   `hook status` says it, and `hook status --json` has `max_wait_before_seconds`. `check`'s way out of a short wait names
   `hook install`. A standard user's hook, an administrator's install, leaves the wait as it is.
+- On a terminal of 120 columns or more the screen is two panes: the table and the newest stops and starts on the left;
+  on the right the selected distribution, with its last stop step by step, each step's time as a bar, what came back,
+  its next stop against `stop_limit`, its containers, its choices, and on a tall terminal its past stops against
+  `stop_limit`. The history shows the chosen run step by step beside the list. The check starts with its verdict, how
+  many findings to look at and how many are fine, each group marked in the color of its worst finding, and stands in
+  two columns.
+- A stop on the screen gives each distribution a block with an edge in the color of how it goes, each step with a bar
+  of its time that grows while it runs, and the stop's time against `stop_limit`; while a step runs, a line under it
+  says what the step does.
+- Setup, from 98 columns and 22 rows, shows its steps on a rail beside the page, and a bar of one segment per step.
+- The table shows how many of a distribution's containers run as a meter, full only when every one runs.
+- The documentation has pictures: the screen as it stops a distribution, a day with wsl-spawner, a stop's steps, the
+  sign-out scripts inside Windows' wait, how a start ends, what runs where, the layers, what it reads and changes, the
+  ways to install, and where Troubleshooting reads each finding.
+
+### Changed
+
+- Beside the pane, the table makes room for its columns where it is short of it: first the tool a distribution is left
+  to in short, then each last stop in its word alone, its time in the pane. Where a container's name would be cut, its
+  state gives its column to the words on coming back.
+- A step's exit code 137, its KILL five seconds after TERM, is a step out of its time in `history` and on the screen,
+  as the stop itself says it; no `exit 137` follows its name.
+
+### Fixed
+
+- `wsl-spawner setup` in a WSL terminal opens its wizard there, drawn as the screen is: it ran in `wsl-spawner.exe`,
+  over pipes that take no keys and no size.
 
 ## [0.1.2] - 2026-11-12
 
@@ -190,7 +222,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.0
 [0.1.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.1.0

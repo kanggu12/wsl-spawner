@@ -13,7 +13,7 @@ says why; the sign-in program starts nothing and says why. `hook` and `uninstall
 | `language` | `"auto"` | `"en"`, `"ko"`, or `"auto"`: `WSL_SPAWNER_LANG`, then Windows' display language. For the screen, setup and the overview; the commands print English |
 | `theme` | `"auto"` | `"dark"`, `"light"`, or `"auto"`, which asks the terminal |
 | `mode` | `"tui"` | what a bare `wsl-spawner` opens in a terminal: `"tui"`, the screen, or `"cli"`, the overview |
-| `skip` | `[]` | distributions, by name, left to WSL: wsl-spawner neither stops nor starts them |
+| `skip` | `[]` | distributions, by name, left to WSL: wsl-spawner neither stops nor starts them, and WSL's own stop still ends them |
 | `logon` | `[]` | distributions started at sign-in, in this order, each kept running; not one of `skip` |
 | `resume` | `"running"` | which running containers come back at the next start after a stop of wsl-spawner's: `"running"`, every one; `"policy"`, those with a restart policy of `always` or `unless-stopped`; `"off"`, none that wsl-spawner brings back itself: a restart policy still brings its container back |
 | `stop_limit` | `300` | seconds a distribution's steps may take together, from 10 to 3600 |

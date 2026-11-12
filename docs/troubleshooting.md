@@ -5,7 +5,7 @@ Start with `wsl-spawner check`: it reads everything a stop and a start stand on 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/trouble-dark.svg">
-  <img alt="What wsl-spawner says, and where Troubleshooting reads it. wsl-spawner check: its last stop ran out of time in a step (2026-11-11 22:36), read under A stop ran out of time; a step of its last stop failed (2026-11-08 22:41), under A step failed; WSL was updated at 2026-11-10 22:35, which ends every distribution, under The last start ended without its time; sign-out hook installed, but scripts after it run once WSL has stopped, under The sign-out hook did not run; kept running needs Windows programs, which do not run in it, under A distribution does not stay running. On the screen after a start: started, web brought back, db did not start, under A container did not come back. wsl-spawner set Work --managed: setting wsl-spawner up in Work: systemd does not run in it, under Set up fails. wsl-spawner in a WSL terminal: wsl-spawner.exe was not found next to this file or on the Windows PATH, under The screen in a WSL terminal." src="assets/trouble-light.svg">
+  <img alt="What wsl-spawner says, and the section of Troubleshooting for each: from the check, a stop out of time, a failed step, an update of WSL, scripts after the hook, a distribution that cannot stay running; after a start, a container that did not come back; set up where systemd does not run; the launcher that cannot find wsl-spawner.exe." src="assets/trouble-light.svg">
 </picture>
 
 ## A stop ran out of time

@@ -15,6 +15,13 @@ With no settings file yet, a terminal's first start opens setup first. `--demo` 
 nothing real is read or changed; `--theme auto|dark|light` chooses the screen's colors, there and with `tui`;
 `--lang auto|en|ko` the language of the screen, setup and the overview, on every command.
 
+In CLI mode the overview is the distributions and the commands to use next, with their names in them:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/cli-dark.png">
+  <img alt="CLI mode: a table of the four distributions with their state, how far wsl-spawner goes with each, their containers and their last stop; then the commands to use next, with the distributions' names in them: stop Ubuntu-24.04, start Debian, set Work --managed, check, tui." src="assets/cli-light.png">
+</picture>
+
 ## The commands
 
 ### status
@@ -91,16 +98,24 @@ distribution's steps. `--clear [--yes]` removes the history; with `--json` it pr
 `wsl-spawner uninstall [--purge] [--yes]` removes wsl-spawner and what it put on this PC ([setup](setup.md#remove)).
 `wsl-spawner version` prints the build.
 
-## The screen's keys
+## The screen
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screen-dark.png">
+  <img alt="The screen on a wide terminal, in two panes. On the left, four distributions: Ubuntu-24.04, selected, runs, set up and started at sign-in, three of its four containers running, its last stop clean; Debian stopped; Work running, stop only; docker-desktop left to Docker Desktop; under them, the recent stops and starts. On the right, Ubuntu-24.04: its last stop step by step, its next stop, its containers, its choices and its stops." src="assets/screen-light.png">
+</picture>
+
+The screen is drawn from the commands' JSON, the same in PowerShell and in a WSL terminal, so everything on it is a
+command too.
 
 | Key | Main screen |
 |:---|:---|
 | `↑` `↓` `home` `end` | select a distribution |
 | `s` | stop it |
 | `S` | stop every running distribution of wsl-spawner's, then WSL; with none running, WSL alone |
-| `t` | start it |
+| `t` | start it, and see what came back |
 | `m` / `k` / `l` / `x` | turn: set up in it / kept running / started at sign-in / left to WSL |
-| `c` / `h` / `?` | the check / the history / the keys and how it works |
+| `c` / `h` / `?` | the check / the history / every key, and how it works |
 | `r` | read the distributions again |
 | `q` | quit |
 

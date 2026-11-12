@@ -1,13 +1,13 @@
 # Internals
 
-How wsl-spawner is put together: what runs where, the layers of the code, what it reads and changes, the decisions
-behind them, and the tests and CI that hold them.
+How wsl-spawner, one Go program built for Windows and for Linux, is put together: what runs where, the layers of the
+code, what it reads and changes, the decisions behind them, and the tests and CI that hold them.
 
 ## What runs where
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/pieces-dark.svg">
-  <img alt="What runs where. In PowerShell or Windows Terminal, wsl-spawner.exe draws the screen and reads the keys. In a WSL terminal, wsl-spawner, the Linux build of the same program, draws the screen there and asks the .exe for each answer, as JSON. At sign-in and sign-out, Windows starts wsl-spawnerw.exe, the same program with no window: logon starts the distributions you chose, logoff stops them all. The program asks wsl.exe, which lists, starts and stops distributions and runs its scripts in them as root. Inside each distribution set up: start.sh at each start, a service that keeps it running, its notes in /var/lib/wsl-spawner. It sets the sign-in program as you and, as an administrator, the sign-out hook and its wait in the local Group Policy. It reads the event logs after a start that ended without its time. It runs as you, with no network, and no program of it stays running on Windows; a distribution kept running holds Windows' own waitfor.exe." src="assets/pieces-light.svg">
+  <img alt="What runs where. Above: a Windows terminal, a WSL terminal, where the Linux build sends commands and gets JSON back, and Windows itself at sign-in and sign-out. In the middle: wsl-spawner.exe and its commands. Below: each distribution through wsl.exe as root, Windows' settings, which it sets, and the event logs, which it reads." src="assets/pieces-light.svg">
 </picture>
 
 | Where | What | How |
@@ -29,7 +29,7 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/layers-dark.svg">
-  <img alt="The layers of the code under internal, highest first; an import goes down, never up, and a test fails when one goes up. cmd: the program, in WSL the launcher (wsl-spawner). front: what people use (cli, tui, api, ui, i18n). app: puts the rest together, once (app, demo). engine: what a stop, a start and a check do (distros, inside, stop, setup, check, history). settings: what people set (config). machine: reads and changes the machine (wsl, winapi, gpo, eventlog). core: safe words and the version, no I/O (plain, version)." src="assets/layers-light.svg">
+  <img alt="The layers of the code under internal, highest first; an import goes down, never up. cmd: the program, in WSL the launcher. front: what people use (cli, tui, api, ui, i18n). app: puts the rest together (app, demo). engine: a stop, a start and a check (distros, inside, stop, setup, check, history). settings: config. machine: wsl, winapi, gpo, eventlog. core: plain, version." src="assets/layers-light.svg">
 </picture>
 
 | Layer | Packages | |
@@ -46,7 +46,7 @@ The code under `internal/` sits in layers. Imports go down, never up; `internal/
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/touches-dark.svg">
-  <img alt="What wsl-spawner reads and what it changes. It reads WSL's own answers (the distributions Windows lists, which run, WSL's version); inside a running distribution, through wsl.exe as root, systemd, its journal, the units, the containers and its own notes, never starting a distribution or Docker's daemon just to read them; and on Windows, the sign-out scripts and the policy's wait, the sign-in program, and after a run that ended without its time, the event logs. It runs as you. It changes, inside each distribution you set it up in, a start script, two services and its notes; for you, the sign-in program and its settings and history; as an administrator, which Windows asks for, the sign-out hook in the local Group Policy and the policy's wait when it is too short. wsl-spawner set NAME --managed=false takes out what it set up in a distribution; uninstall takes out the rest, the settings and history too with --purge; your hooks and units stay." src="assets/touches-light.svg">
+  <img alt="What wsl-spawner reads: WSL's own answers, a running distribution's systemd, journal, units and containers, and on Windows the sign-out scripts, the wait and the event logs. It runs as you and changes nothing before you confirm: each distribution you set it up in, the sign-in program and its settings, and as an administrator the sign-out hook and the wait." src="assets/touches-light.svg">
 </picture>
 
 It reads without asking: WSL's own answers, and in a running distribution, as root, systemd, its journal, the units,
@@ -60,17 +60,20 @@ program under your `Run` key, and as an administrator the sign-out hook and the 
 - **The screen stands on the commands' JSON alone** (`api.Client`). In the Windows program each command is the program
   started again; in a WSL terminal the launcher draws the screen there and starts `wsl-spawner.exe` for each command,
   as the Windows program reaches a WSL terminal only through pipes, which take no keys and no size. The screen can do
-  nothing a command cannot. The demo runs the same commands in its own process, on a made-up PC.
-- **Everything the program reaches on Windows besides WSL is the App's `PC`**: the sign-out scripts, the sign-in
-  programs, a few files and commands, this program started again. Each test gives its App a made-up PC whose every
-  call fails unless the test gave it, so no test can reach the PC it runs on by a path it forgot.
+  nothing a command cannot, so a script can do all of it. The demo runs the same commands in its own process, on a
+  made-up PC.
+- **Windows and WSL are each one interface.** WSL is `wsl.System`; everything the program reaches on Windows besides
+  WSL is the App's `PC`: the sign-out scripts, the sign-in programs, a few files and commands, this program started
+  again. Each test gives its App a made-up PC whose every call fails unless the test gave it, and a made-up WSL
+  (`wsl.Fake`), so no test can reach the PC it runs on by a path it forgot.
 - **Docker's daemon is stopped, not its containers**, with systemd given the time left: a container stopped by hand
   loses its restart policy's start.
 - **A start is the kernel's boot and the init's start**: a distribution stopped and started again keeps the VM's boot.
 - **No program of wsl-spawner's stays running on Windows.** The sign-in program starts the distributions and ends;
   keeping one running is a service inside it, which holds Windows' own `waitfor.exe` open; the sign-out hook runs and
   ends.
-- **A distribution is never started to be read.** One that does not run says nothing about what runs in it.
+- **A distribution is never started to be read.** One that does not run says nothing about what runs in it, and
+  Docker's daemon stopped by hand is not woken to be asked.
 - **The engines are root's.** The scripts run as root and ask root's engines: the containers of another user's engine,
   rootless Podman's or rootless Docker's, are not seen, stopped or brought back.
 
@@ -78,7 +81,7 @@ program under your `Run` key, and as an administrator the sign-out hook and the 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/release-dark.svg">
-  <img alt="From a change to a release. make check runs gofmt, vet and staticcheck for Linux and Windows, shellcheck and go test -race. make test-windows runs every package again as a Windows program, started from WSL. CI runs both, with fuzzing and govulncheck, builds the zips and the demo image, tests on Windows Server 2022 and 2025 and Windows 11 on ARM, stops real distributions on WSL 2, and runs the installers; weekly too. A vX.Y.Z tag runs CI, then builds the zips with provenance, the Scoop manifest and the demo image, then installs the release as you, as a standard user and with Scoop." src="assets/release-light.svg">
+  <img alt="From a change to a release. make check: gofmt, vet, staticcheck, shellcheck and go test -race. make test-windows: every package again as a Windows program. CI: fuzzing, Windows Server 2022 and 2025, Windows on ARM, real stops on WSL 2. A vX.Y.Z tag: the zips with provenance, Scoop and the demo image, then the release installed." src="assets/release-light.svg">
 </picture>
 
 - **The scripts** run under the test machine's `sh` against made-up roots: a temporary folder stands for `/`, with

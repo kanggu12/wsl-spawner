@@ -6,11 +6,36 @@ that does not run just to read it, nor Docker's daemon: one stopped by hand, wit
 packages leave it, is not asked anything, as asking would start it, and reads as asleep. What a distribution says
 (a hook's name, a container's name) is shown with every control character turned into a question mark.
 
+## Why wsl-spawner
+
+- **WSL gives services seconds.** Measured on WSL 3.0.5: `wsl --terminate` ends a distribution's services after about
+  10 seconds, a `systemctl poweroff` inside after about 25. A service that needs longer is cut off.
+- **Signing out is a stop too.** Windows signs out before every shutdown and restart, those an update makes too, and WSL
+  goes with it: a sign-out hook is the one place to run first.
+- **`docker stop` loses the restart policy.** Stopping Docker's daemon keeps it, so that is what wsl-spawner stops
+  ([why](#why-not-docker-stop)).
+- **A distribution with nothing open stops.** WSL ends it within half a minute of the last terminal closing, and its
+  servers with it, unless something holds it ([keeping one running](#keeping-a-distribution-running)).
+- **A cut start says nothing.** After an update or a crash, the services just ended. wsl-spawner notes each start and
+  each of its stops, so the next start knows how the last one ended, and reads what ended it when it was not its stop.
+
+## A day with wsl-spawner
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/day-dark.svg">
+  <img alt="A day with wsl-spawner. Sign-in: it starts the distributions you chose. All day: it keeps them running. Sign-out: its hook runs last and gives each service its time. Next start: the containers come back and it says how the last run ended. Under it, a distribution's day as cells: starting, running, its stop, off, back." src="assets/day-light.svg">
+</picture>
+
+No program of wsl-spawner's stays running on Windows: the sign-in program starts the distributions and ends, and the
+sign-out hook runs and ends. Keeping a distribution running is a service inside it, which holds Windows' own
+`waitfor.exe` open, as Task Manager shows. Each part is a choice, per distribution: stop only, set up (a start script
+that brings the containers back), kept running, started at sign-in.
+
 ## A stop
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/steps-dark.svg">
-  <img alt="A stop, step by step. 1, the containers to bring back are noted first, so a stop cut short still brings them back. 2, your hooks in /etc/wsl-spawner/pre-stop.d run in the order of their names. 3, the systemd units /etc/wsl-spawner/stop-units names stop, ordered by their dependencies. 4, Docker's daemon stops every container itself, each with its own stop timeout, and keeps their restart policies. 5, Podman's containers stop, each with its own timeout. 6, the journal and the disk are synced and the stop's record says how it ended: clean, limit or failed. All the steps share stop_limit, 300 seconds by default; then WSL ends what is left." src="assets/steps-light.svg">
+  <img alt="A stop in six steps: note the containers to bring back, your hooks, your units, Docker's daemon stopping every container, Podman's containers, then sync and record how it went. Under them, stop_limit, 300 seconds, as a row of cells: the demo's stop lit 23 seconds of it; then WSL ends what is left." src="assets/steps-light.svg">
 </picture>
 
 `wsl-spawner stop NAME`, `s` and `S` on the screen, and the sign-out hook all stop a distribution the same way. A script runs
@@ -52,6 +77,13 @@ left, with the few seconds it gives. A stop that was asked for always leaves the
 `wsl-spawner stop` stops waiting for the steps and WSL ends what is left; on the screen Ctrl+C says the stop goes on to
 its end, and the screen closes as it ends.
 
+The screen shows each step as it runs, with its time as a bar, and the stop's whole time against `stop_limit`:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/stop-dark.png">
+  <img alt="A stop of Ubuntu-24.04 on the screen, after its end: the hook 10-backup-db done in 2 seconds, Docker with 3 containers in 21, the sync to disk, then WSL ending the rest, each with a bar of its time. Stopped, every step in its time: 23 seconds of the 300 the limit allows. Web, db and cache come back at its next start." src="assets/stop-light.png">
+</picture>
+
 Distributions stop at the same time. `--shutdown`, `S` and the sign-out hook then run `wsl --shutdown`, which stops
 every distribution, wsl-spawner's or not, and WSL's VM.
 
@@ -62,7 +94,7 @@ with no console, which the terminal's end does not end, and the history says how
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/compare-dark.svg">
-  <img alt="How a stop by wsl-spawner compares with wsl --shutdown and with docker stop. wsl --shutdown gives no service its time to stop and cuts containers mid-write; they come back only by their restart policy; it does not run at sign-out and keeps no record. docker stop gives only containers their time and marks them stopped by hand, so one with unless-stopped no longer starts and only those with always come back; it does not run at sign-out and keeps no record. wsl-spawner gives each service and container its own time, keeps their policies, brings back the containers you choose, runs last as Windows signs out, and says how each stop went in history and check." src="assets/compare-light.svg">
+  <img alt="How a stop compares. wsl --shutdown: no time for services, containers cut mid-write, back only by their policy. docker stop: time for containers only, unless-stopped lost, only always ones back. wsl-spawner: each service its own time, policies kept, containers back as you choose, runs last at sign-out, says how it went." src="assets/compare-light.svg">
 </picture>
 
 A container stopped by `docker stop` is marked as stopped by hand, and `unless-stopped` no longer starts it when Docker
@@ -73,7 +105,7 @@ slowest. That is what wsl-spawner asks for, with enough time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/signout-dark.svg">
-  <img alt="What Windows does as you sign out, shut down or restart. It runs the sign-out scripts one after another and waits for them, up to the policy's wait for all of them together, 600 seconds by default. Other scripts run first; wsl-spawner's hook, wsl-spawnerw.exe logoff, runs last, so a script that still needs WSL finds it running. The hook stops every running distribution of wsl-spawner's within stop_limit, then WSL. Then Windows signs you out. wsl-spawner hook install raises a wait shorter than stop_limit and a minute, and hook remove puts it back; check says when it is short." src="assets/signout-light.svg">
+  <img alt="Windows runs the sign-out scripts in order: the others first, then wsl-spawner's hook, last, which stops each distribution step by step, then WSL; then you are signed out. Under them, the policy's wait for all the scripts, 600 seconds by default, as a row of cells: the others' part, then the hook's stop_limit at most." src="assets/signout-light.svg">
 </picture>
 
 `wsl-spawner hook install` adds a sign-out script to the local Group Policy, after any other: `wsl-spawnerw.exe logoff`,
@@ -157,7 +189,7 @@ this, wsl-spawner stopped it, and its record says how; when it is not, that star
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/ends-dark.svg">
-  <img alt="How a start of a distribution ends, and what wsl-spawner says about it. start.sh notes each start; the next start looks at how the last one ended. It ended in wsl-spawner's stop, which notes the start it stopped and how it went: clean, every step in its time; out of time, a step used the time left and WSL ended the rest; or a step failed, a hook, a unit or an engine. Or it ended without its time, with no stop of wsl-spawner's for that start, and the next start reads why from the distribution's journal and Windows' event logs: a WSL update, which ends every distribution; a Windows shutdown or restart without the hook; a sign-out without the hook; an unclean shutdown, a crash, a hang or a power cut; or a stop outside wsl-spawner, by wsl --shutdown, wsl --terminate or WSL itself. status, check and the screen say how the last start ended and why; wsl-spawner history keeps its own stops." src="assets/ends-light.svg">
+  <img alt="How a start ends. In wsl-spawner's stop, which notes how it went: clean, out of time, or a step failed. Or without its time, and the next start reads why from the journal and the event logs: a WSL update, a shutdown or restart without the hook, a sign-out without the hook, an unclean shutdown, or a stop outside wsl-spawner." src="assets/ends-light.svg">
 </picture>
 
 What ended a start without wsl-spawner's stop is read as [the sign-out hook](#the-sign-out-hook) says, from the
@@ -194,3 +226,14 @@ keeps from programs (`netsh interface ipv4 show excludedportrange`). Each findin
 
 Docker Desktop's, Rancher Desktop's and Podman's machine distributions are their tools': wsl-spawner lists them and
 leaves them be. A WSL 1 distribution has no VM and no systemd. `skip` in the settings leaves any other to WSL.
+
+## How it compares
+
+| | Services get their time | At sign-out and restart | Containers come back | Kept running | Says how it last stopped |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| **wsl-spawner** | yes, each its own | yes, a sign-out hook | yes, by policy and by note | yes | yes, and what cut it |
+| `wsl --terminate` | about 10 s | no | by policy only | no | no |
+| `systemctl poweroff` inside | about 25 s | no | by policy only | no | no |
+| Keep-alive scripts and tray apps | about 10 s | no | by policy only | yes | no |
+
+wsl-spawner runs `wsl --terminate` itself, after its own steps.

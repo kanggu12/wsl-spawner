@@ -11,11 +11,21 @@
   after a sign-out says whether it ran. Installing and removing it needs an administrator.
 - **PowerShell** 5.1 (Windows' own) or 7 for `install.ps1`.
 
+## Try it in a sandbox
+
+On any system with Docker, the screen on a made-up PC, where nothing real is read or changed:
+
+```sh
+docker run --rm -it ghcr.io/kanggu12/wsl-spawner-demo
+```
+
+`-e WSL_SPAWNER_LANG=ko` before the image name for Korean. Once installed, `wsl-spawner --demo` opens the same PC.
+
 ## Install
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/ways-dark.svg">
-  <img alt="Ways to install wsl-spawner and where it runs. In PowerShell, one line checks the release's checksum, puts the folder on your PATH and opens setup. Scoop installs the manifest from the release and keeps it current. By hand, the zip for your processor goes in a folder on your PATH. For a standard user, an administrator installs it under Program Files, with the sign-out hook. Every way gives one folder: wsl-spawner.exe, the Windows program; wsl-spawnerw.exe, the same with no window, which the sign-in program and the sign-out hook start; and wsl-spawner, the launcher for WSL. It runs in PowerShell and Windows Terminal, inside WSL under the same name, and at sign-in and sign-out with no window." src="assets/ways-light.svg">
+  <img alt="Ways to install: PowerShell's one line, Scoop, by hand, or an administrator's install for a standard user. Each gives one folder on PATH: wsl-spawner.exe, wsl-spawnerw.exe, the same with no window, and wsl-spawner, the launcher for WSL. It runs in PowerShell and Windows Terminal, inside WSL, and at sign-in and sign-out." src="assets/ways-light.svg">
 </picture>
 
 In PowerShell, as you, not as an administrator:
@@ -28,6 +38,14 @@ It picks the build for the PC's processor, checks it against the release's `chec
 `wsl-spawnerw.exe` (the same program with no console, which the sign-in program and the sign-out hook start) and the
 WSL launcher `wsl-spawner` in `%LOCALAPPDATA%\Programs\wsl-spawner`, adds that folder to your PATH, and opens setup
 the first time. Open a new terminal, PowerShell or WSL, and run `wsl-spawner`.
+
+Setup is a short wizard, a page for each choice, the language and colors shown as they are chosen. The install opens
+it, or the first start where the install did not; `wsl-spawner setup` opens it again.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/setup-dark.png">
+  <img alt="The setup wizard at step 5 of 7, Distributions. A rail on the left lists the steps, the first four checked. Each distribution has a level, chosen with space: stop only, set up, kept running, or started at sign-in. Ubuntu-24.04 is started at sign-in; Debian is stopped: what is set up in it shows once it runs; Work, selected, is kept running." src="assets/setup-light.png">
+</picture>
 
 | Variable | Does |
 |:---|:---|

@@ -22,7 +22,6 @@
   <a href="#quick-start">Quick start</a> |
   <a href="#what-it-does">What it does</a> |
   <a href="#how-it-works">How it works</a> |
-  <a href="#for-contributors">For contributors</a> |
   <a href="#documentation">Documentation</a>
 </p>
 
@@ -93,32 +92,6 @@ One Go program, built for Windows and for Linux: on Windows it does the work, an
 that hands each command to `wsl-spawner.exe` and draws the screen from its JSON. It reaches a distribution only through
 `wsl.exe`, as root, never starts one just to read it, and leaves no program of its own running on Windows.
 [How it works](docs/how-it-works.md) follows a stop and a start, step by step.
-
-## For contributors
-
-wsl-spawner is MIT licensed and developed in the open. No change needs your own distributions: the tests run the
-scripts it sends into a distribution against made-up roots, and the commands and the screen against a made-up WSL.
-[CONTRIBUTING.md](.github/CONTRIBUTING.md) says what a change needs, and [Internals](docs/internals.md) how the parts
-fit together.
-
-| Path | What it is |
-|:---|:---|
-| `cmd/wsl-spawner` | the program; in WSL, the launcher that hands each command to `wsl-spawner.exe` |
-| `internal/front` | the commands, the screen and setup, the commands' JSON, the words in English and Korean |
-| `internal/engine` | the distributions, the scripts run inside them, a stop, set-up, the check, the history |
-| `internal/machine` | `wsl.exe`, Windows' calls, the local Group Policy and its wait, the event logs |
-| `internal/app`, `settings`, `core` | the pieces put together and the demo's made-up PC, `config.toml`, the version |
-
-```sh
-git clone https://github.com/kanggu12/wsl-spawner && cd wsl-spawner
-make check          # gofmt, go vet, staticcheck, shellcheck, the unit tests
-make test-windows   # from WSL: every package again as a Windows program
-go run ./cmd/wsl-spawner --demo
-```
-
-Report a stop it got wrong in [Issues](https://github.com/kanggu12/wsl-spawner/issues/new/choose), with the output of
-`wsl-spawner check` and `wsl-spawner history --json`. See what changed in [CHANGELOG.md](CHANGELOG.md); report
-security problems as [SECURITY.md](.github/SECURITY.md) says.
 
 ## What it runs on
 

@@ -2,14 +2,24 @@
 
 ## Requirements
 
-- **Windows 10 or 11**, x64 or ARM64, with **WSL 2**. A WSL 1 distribution is listed and left be.
-- **systemd** in the distributions you set wsl-spawner up in (`[boot] systemd=true` in `/etc/wsl.conf`): the start
-  script and the keep-running service are systemd's. A stop works without it.
-- **Windows programs in WSL** (`[interop] enabled=true`, WSL's default) for keeping a distribution running.
-- **The sign-out hook** uses the local Group Policy's sign-out scripts, which Windows 10 and 11 Pro, Enterprise and
-  Education run. On Windows Home it installs as well; whether Home runs it has not been seen, so `wsl-spawner history`
-  after a sign-out says whether it ran. Installing and removing it needs an administrator.
-- **PowerShell** 5.1 (Windows' own) or 7 for `install.ps1`.
+| | Needs | Best with |
+|:---|:---|:---|
+| Windows | Windows 10 or 11, on x64 or ARM64 ([what differs](#versions)) | Pro, Enterprise or Education, which run the sign-out hook |
+| WSL | WSL 2 distributions; a WSL 1 one is listed and left be | |
+| Distributions | `sh`, dash's and BusyBox's included | systemd on (`[boot] systemd=true` in `/etc/wsl.conf`) where you set wsl-spawner up, and Windows programs in WSL (`[interop] enabled=true`, WSL's default) where you keep one running |
+| Sign-out hook | the local Group Policy's sign-out scripts, and an administrator to install and remove it | |
+| Install script | Windows PowerShell 5.1, which every Windows has, or PowerShell 7 | |
+| Screen | a VT terminal of 40 by 12 cells: Windows Terminal, the Windows console, VS Code's terminal, or any terminal inside WSL | Windows Terminal, 120 by 30 cells: from 120 columns the screen is two panes |
+| [Demo sandbox](#try-it-in-a-sandbox) | Docker | |
+
+The start script and the keep-running service are systemd's; without systemd a distribution is stopped the slow way
+all the same. On Windows Home the sign-out hook installs as well; whether Home runs it has not been seen, so
+`wsl-spawner history` after a sign-out says whether it ran. The Windows console's own window gets ASCII for the marks
+its fonts lack, and all ASCII on an East Asian code page; `WSL_SPAWNER_SYMBOLS` (`unicode`, `plain` or `ascii`) chooses
+otherwise.
+
+The program, its windowless twin and its WSL launcher are 8 to 9 MB each; none needs another library. It runs as you,
+with no network, and no program of its own stays running on Windows; only the sign-out hook asks for an administrator.
 
 ## Try it in a sandbox
 

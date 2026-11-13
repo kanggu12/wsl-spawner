@@ -6,6 +6,15 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+### Changed
+
+- The README leads with a quick start in three steps: install, look over what a stop stands on without changing
+  anything, open the screen. Why wsl-spawner exists, a day with it and how it compares moved to
+  [How it works](docs/how-it-works.md), the screen and its keys to [Commands](docs/commands.md), the sandbox to
+  [Setup](docs/setup.md), and the questions to a new [Questions](docs/questions.md) page.
+- The documentation's figures share one look, wsl-spawner's own: glass panels, its open ring on its own parts, its
+  flows in its color, and a stop's time drawn as the screen's segmented bar.
+
 ## [0.2.2] - 2026-11-13
 
 A path that wraps breaks after a separator.

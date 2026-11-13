@@ -94,37 +94,17 @@ that hands each command to `wsl-spawner.exe` and draws the screen from its JSON.
 `wsl.exe`, as root, never starts one just to read it, and leaves no program of its own running on Windows.
 [How it works](docs/how-it-works.md) follows a stop and a start, step by step.
 
-## What it runs on
-
-| | Needs |
-|:---|:---|
-| **Windows** | Windows 10 or 11, x64 or ARM64 |
-| **WSL** | WSL 2 distributions; systemd in those wsl-spawner is set up in (a stop works without it) |
-| **Sign-out hook** | the local Group Policy's sign-out scripts, which Pro, Enterprise and Education run; an administrator to install it |
-| **Install script** | Windows PowerShell 5.1, which every Windows has, or PowerShell 7 |
-| **Demo sandbox** | Docker |
-
-It runs as you, with no network; only the sign-out hook asks for an administrator. [Setup](docs/setup.md#requirements)
-has the details.
-
 ## Documentation
 
-| Guide | What it covers |
-|:---|:---|
-| [Setup](docs/setup.md) | requirements, every way to install, upgrade and remove, the sandbox |
-| [How it works](docs/how-it-works.md) | why, a day, a stop step by step, the sign-out hook, the start and how the last one ended, how it compares |
-| [Commands](docs/commands.md) | the screen and its keys, every command and flag, the `--json` shapes, the exit codes |
-| [Settings](docs/settings.md) | `config.toml`, the hooks and units stopped first, the files wsl-spawner writes |
-| [Troubleshooting](docs/troubleshooting.md) | what each finding of `check` means and what to do about it |
-| [Questions](docs/questions.md) | administrator rights, signing out, what it changes, Docker Desktop, removing it |
-| [Internals](docs/internals.md) | what runs where, the layers, the decisions, the tests and CI |
+[Setup](docs/setup.md) · [How it works](docs/how-it-works.md) · [Commands](docs/commands.md) ·
+[Settings](docs/settings.md) · [Troubleshooting](docs/troubleshooting.md) · [Questions](docs/questions.md) ·
+[Internals](docs/internals.md). [The guides' index](docs/README.md) says what each covers.
 
 ## Contributing
 
 [CONTRIBUTING.md](.github/CONTRIBUTING.md) has how the pieces fit, how to build and test, and what a change needs.
-Report a problem in [Issues](https://github.com/kanggu12/wsl-spawner/issues/new/choose), which asks for the output that helps;
-see what changed in [CHANGELOG.md](CHANGELOG.md), and report security problems as [SECURITY.md](.github/SECURITY.md)
-says.
+Problems go to [Issues](https://github.com/kanggu12/wsl-spawner/issues/new/choose), security problems as
+[SECURITY.md](.github/SECURITY.md) says; [CHANGELOG.md](CHANGELOG.md) lists what changed.
 
 ## License
 

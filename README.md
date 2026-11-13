@@ -22,7 +22,8 @@
   <a href="#quick-start">Quick start</a> |
   <a href="#what-it-does">What it does</a> |
   <a href="#how-it-works">How it works</a> |
-  <a href="#documentation">Documentation</a>
+  <a href="#documentation">Documentation</a> |
+  <a href="#contributing">Contributing</a>
 </p>
 
 <picture>
@@ -117,6 +118,13 @@ has the details.
 | [Troubleshooting](docs/troubleshooting.md) | what each finding of `check` means and what to do about it |
 | [Questions](docs/questions.md) | administrator rights, signing out, what it changes, Docker Desktop, removing it |
 | [Internals](docs/internals.md) | what runs where, the layers, the decisions, the tests and CI |
+
+## Contributing
+
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) has how the pieces fit, how to build and test, and what a change needs.
+Report a problem in [Issues](https://github.com/kanggu12/wsl-spawner/issues/new/choose), which asks for the output that helps;
+see what changed in [CHANGELOG.md](CHANGELOG.md), and report security problems as [SECURITY.md](.github/SECURITY.md)
+says.
 
 ## License
 

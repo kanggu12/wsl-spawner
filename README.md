@@ -96,9 +96,15 @@ that hands each command to `wsl-spawner.exe` and draws the screen from its JSON.
 
 ## Documentation
 
-[Setup](docs/setup.md) · [How it works](docs/how-it-works.md) · [Commands](docs/commands.md) ·
-[Settings](docs/settings.md) · [Troubleshooting](docs/troubleshooting.md) · [Questions](docs/questions.md) ·
-[Internals](docs/internals.md). [The guides' index](docs/README.md) says what each covers.
+| Guide | What it covers |
+|:---|:---|
+| [Setup](docs/setup.md) | requirements, every way to install, upgrade and remove, the sandbox |
+| [How it works](docs/how-it-works.md) | a stop step by step, the sign-out hook, the start and how the last one ended |
+| [Commands](docs/commands.md) | the screen and its keys, every command and flag, the `--json` shapes |
+| [Settings](docs/settings.md) | `config.toml`, the hooks and units stopped first, the files it writes |
+| [Troubleshooting](docs/troubleshooting.md) | what each finding of `check` means and what to do |
+| [Questions](docs/questions.md) | administrator rights, signing out, Docker Desktop, removing it |
+| [Internals](docs/internals.md) | what runs where, the layers, the tests |
 
 ## Contributing
 

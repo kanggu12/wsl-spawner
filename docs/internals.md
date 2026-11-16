@@ -95,8 +95,8 @@ program under your `Run` key, and as an administrator the sign-out hook and the 
 - **On Windows** (`make test-windows`), every package again as a Windows program: the Windows calls, and that no test
   changes the PC or starts a program.
 - **End to end** (CI, on Windows Server 2025): a throwaway distribution with systemd and a service that takes 40 seconds
-  to stop, stopped by the program built from the commit, which waits for it; set up, kept running, started again; the sign-out hook
-  installed, read back and removed.
+  to stop, stopped by the program built from the commit, which waits for it; set up, kept running, started again; the
+  sign-out hook installed, read back and removed.
 
 CI (`.github/workflows`) runs on each push to main and each pull request, and weekly; the installers and the release
 run at a release:

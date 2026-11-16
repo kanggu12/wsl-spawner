@@ -12,9 +12,9 @@ Start with `wsl-spawner check`: it reads everything a stop and a start stand on 
 
 The stop ended `limit` (exit code 3, `!` on the screen): a step was still running at `stop_limit`.
 
-- `wsl-spawner history` names the step after the result, as `out of time: hook 10-backup`. A hook: make it quicker, or give it a timeout of its own. A unit: its own
-  `TimeoutStopSec` is what it waits. Docker or Podman: the container with the longest stop timeout sets the wait;
-  `wsl-spawner check` lists those at or past the limit.
+- `wsl-spawner history` names the step after the result, as `out of time: hook 10-backup`. A hook: make it quicker, or
+  give it a timeout of its own. A unit: its own `TimeoutStopSec` is what it waits. Docker or Podman: the container with
+  the longest stop timeout sets the wait; `wsl-spawner check` lists those at or past the limit.
 - Raise the limit: `wsl-spawner setup --stop-limit 600`. The sign-out hook still has only what Windows waits for the
   sign-out scripts (600 seconds by default): run `wsl-spawner hook install` again, which raises that wait to fit the
   new limit; `check` says when the two do not fit.
@@ -41,10 +41,10 @@ running `dockerd`, is Docker Desktop's or another engine's: it has no step.
 
 ## The last start ended without its time
 
-`check` says `✗ the start before this one ended without wsl-spawner's stop`: WSL or Windows ended the distribution with the few
-seconds WSL gives. Something stopped WSL before wsl-spawner's stop could run: an update of WSL, `wsl --shutdown` or
-`wsl --terminate` typed by hand, a crash, or a sign-out, shutdown or restart with no hook installed. `wsl-spawner hook install` covers sign-out, shutdown and restart;
-stop it with `wsl-spawner stop` before stopping WSL by hand.
+`check` says `✗ the start before this one ended without wsl-spawner's stop`: WSL or Windows ended the distribution with
+the few seconds WSL gives. Something stopped WSL before wsl-spawner's stop could run: an update of WSL, `wsl --shutdown`
+or `wsl --terminate` typed by hand, a crash, or a sign-out, shutdown or restart with no hook installed. `wsl-spawner
+hook install` covers sign-out, shutdown and restart; stop it with `wsl-spawner stop` before stopping WSL by hand.
 
 Where it can tell, the line after says what it was, and when: Windows did not shut down cleanly (a crash, a hang or a
 power cut), WSL was updated, Windows shut down or restarted, or you signed out, without wsl-spawner's stop; or it was
@@ -59,7 +59,8 @@ more. It is a hint, not proof: any program you run may write an event of Windows
   stopped; one before it that stops WSL itself leaves it nothing to stop, and `check` names it. PowerShell sign-out
   scripts and a domain's run after the hook: `hook status` lists the PowerShell ones.
 - `hook status` lists other copies' hooks. One that runs before this one stops WSL first: take it out with that copy's
-  own `wsl-spawner hook remove`, or in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) > Logoff.
+  own `wsl-spawner hook remove`, or in gpedit.msc > User Configuration > Windows Settings > Scripts (Logon/Logoff) >
+  Logoff.
 - `hook install` ended with exit code 3: the change is made, but Windows has not read it yet, or Windows' wait for the
   sign-out scripts stayed shorter than `stop_limit`, as a domain's policy may keep it. It says which. A change not read
   yet counts from your next sign-in, and `gpupdate /target:user` has Windows read it now.
@@ -98,15 +99,15 @@ engine whose daemon does not answer. What was read stands; `docker info` inside 
 ## The install stops
 
 - **"could not download"**: the PC cannot reach github.com, or `WSL_SPAWNER_VERSION` names no release. Download the zip
-  for your processor and `wsl-spawner-0.2.5-checksums.txt` elsewhere, then install from the zip (`WSL_SPAWNER_ZIP`,
+  for your processor and `wsl-spawner-0.2.6-checksums.txt` elsewhere, then install from the zip (`WSL_SPAWNER_ZIP`,
   [Setup](setup.md#install)).
 - **"checksum mismatch"**: the download was damaged or changed on the way. Run the install again; report it if it
   repeats.
 - **"is in use; close wsl-spawner"**: a wsl-spawner still runs, in another terminal. Close it, then run the install
   again. Nothing was replaced.
-- **"running scripts is disabled on this system"**: a saved `wsl-spawner-0.2.5-install.ps1` was run as a file. The
-  one-line install (`irm ... | iex`) runs no file and is not stopped by the execution policy; or run the file with
-  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.5-install.ps1`.
+- **"running scripts is disabled on this system"**: a saved `wsl-spawner-0.2.6-windows-installer.ps1` was run as a file.
+  The one-line install (`irm ... | iex`) runs no file and is not stopped by the execution policy; or run the file with
+  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.6-windows-installer.ps1`.
 - **"Method invocation is supported only on core types in this language mode"**: PowerShell runs in ConstrainedLanguage
   mode, as on company PCs under AppLocker or Windows Defender Application Control. Install from the zip by hand
   ([Setup](setup.md#install)).
@@ -114,7 +115,7 @@ engine whose daemon does not answer. What was read stands; `docker info` inside 
   the line to PowerShell on its command line, as `powershell.exe -Command "irm ... | iex"` from cmd or a WSL shell, and
   Microsoft Defender took that command line for a download cradle. Paste the line into a PowerShell window, where it
   runs as typed, or save the script and run
-  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.5-install.ps1`.
+  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.6-windows-installer.ps1`.
 
 ## The screen in a WSL terminal
 

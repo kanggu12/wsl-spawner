@@ -38,7 +38,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-install.ps1"
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-windows-installer.ps1"
           $env:WSL_SPAWNER_VERSION_WANTED = $env:WANT
           irm $env:SCRIPT | iex
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
@@ -68,7 +68,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # The release's own install script, named with its version.
-          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-install.ps1"
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-windows-installer.ps1"
           irm $env:SCRIPT | iex
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
           $v = & (Join-Path $dir 'wsl-spawner.exe') version
@@ -93,7 +93,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # The release's own install script, named with its version.
-          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-install.ps1"
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-windows-installer.ps1"
           irm $env:SCRIPT | iex
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner\wsl-spawner.exe'
           & $exe version
@@ -128,7 +128,7 @@ jobs:
           $env:WSL_SPAWNER_VERSION = $env:WANT
           $env:WSL_SPAWNER_BIN_DIR = "$env:ProgramFiles\wsl-spawner"
           $env:WSL_SPAWNER_NO_SETUP = '1'
-          irm "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-install.ps1" | iex
+          irm "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-windows-installer.ps1" | iex
           $dir = "$env:ProgramFiles\wsl-spawner"
           $exe = "$dir\wsl-spawner.exe"
           $v = & $exe version

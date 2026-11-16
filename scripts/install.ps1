@@ -1,7 +1,7 @@
 # Install wsl-spawner from a GitHub release, for the current user. Each
 # release has its own copy, which installs that release:
 #
-#   irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.3/wsl-spawner-0.2.3-install.ps1 | iex
+#   irm https://github.com/kanggu12/wsl-spawner/releases/download/vX.Y.Z/wsl-spawner-X.Y.Z-windows-installer.ps1 | iex
 #
 # Settings, all optional, as environment variables:
 #   WSL_SPAWNER_VERSION   release to install, like v0.1.0 (default: the

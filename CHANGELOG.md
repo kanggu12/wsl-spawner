@@ -6,6 +6,23 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-17
+
+Release files that say what they are.
+
+### Changed
+
+- The installer is `wsl-spawner-0.2.6-windows-installer.ps1`, where it was `wsl-spawner-0.2.5-install.ps1`: every
+  file for Windows says so in its name, the installer beside the zips for x64 and arm64.
+- The release page lists the files under the changes, each with what it is for: the installer, the zip for each
+  processor, the checksums and the Scoop manifest.
+
+### Fixed
+
+- The `wsl-spawner` command in WSL, finding no `wsl-spawner.exe`, told to run
+  `releases/latest/download/install.ps1`, a file no release has had since 0.2.3. It names its own release's Windows
+  installer now.
+
 ## [0.2.5] - 2026-11-17
 
 A header that stands apart from the screen and says where one is.
@@ -323,7 +340,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.6
 [0.2.5]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.3

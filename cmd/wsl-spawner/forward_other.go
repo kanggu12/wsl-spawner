@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/kanggu12/wsl-spawner/internal/front/cli"
+	"github.com/kanggu12/wsl-spawner/internal/version"
 )
 
 // forward hands the command line to wsl-spawner.exe when this Linux build
@@ -38,7 +39,7 @@ func forward() bool {
 		if answersAlone(os.Args[1:]) {
 			return false
 		}
-		cli.PrintError(os.Stderr, "wsl-spawner.exe was not found next to this file or on the Windows PATH", "install it in PowerShell on Windows: "+installHint)
+		cli.PrintError(os.Stderr, "wsl-spawner.exe was not found next to this file or on the Windows PATH", "install it in PowerShell on Windows: "+installHint())
 		exit(1)
 		return true
 	}
@@ -49,7 +50,7 @@ func forward() bool {
 		if answersAlone(os.Args[1:]) {
 			return false
 		}
-		cli.PrintError(os.Stderr, why, "install the build for this PC in PowerShell: "+installHint)
+		cli.PrintError(os.Stderr, why, "install the build for this PC in PowerShell: "+installHint())
 		exit(1)
 		return true
 	}
@@ -109,9 +110,17 @@ var (
 // path it took to get there: tests give stand-ins for what would start.
 var errNoProgramInTests = errors.New("a test starts no program; give it a stand-in")
 
-// installHint is how wsl-spawner is installed, in PowerShell on Windows:
-// the installer picks the build for the PC's processor.
-const installHint = "irm https://github.com/kanggu12/wsl-spawner/releases/latest/download/install.ps1 | iex"
+// installHint is how wsl-spawner is installed, in PowerShell on Windows: the
+// Windows installer of this launcher's own release, which picks the build
+// for the PC's processor. A build of no release has no installer of its
+// name and points at the releases instead.
+func installHint() string {
+	v := version.Short()
+	if !strings.HasPrefix(v, "v") {
+		return "see https://github.com/kanggu12/wsl-spawner/releases/latest"
+	}
+	return "irm https://github.com/kanggu12/wsl-spawner/releases/download/" + v + "/wsl-spawner-" + v[1:] + "-windows-installer.ps1 | iex"
+}
 
 // relayEnv is env for the .exe started in this terminal: fds says which of
 // its ends a person is at ("0" stdin, "1" stdout, "2" stderr) and goes

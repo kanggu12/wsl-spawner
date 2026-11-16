@@ -19,12 +19,13 @@ The code sits in layers. Imports go down, never up; `internal/layers_test.go` fa
 | machine | `wsl`, `winapi`, `gpo`, `eventlog` | `wsl.exe`, Windows' calls, the local Group Policy's files and the policy's wait, Windows' event logs |
 | core | `version`, `plain` | the build's version; text read from a distribution made safe to show |
 
-Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, setting up
-and taking out, and the read of the journal after a start that was cut. What goes into a script is a number or a plain word, checked before it goes in; nothing read from a
-distribution does. `engine/stop` alone runs a stop: the `stop` command, the screen through it, and the sign-out hook's
-`logoff` all go through it. Everything on Windows but WSL goes through the App's `PC`. The screen reads and changes
-nothing but through the commands' JSON (`api.Client`). [Internals](../docs/internals.md) has what runs where and why,
-and [how it works](../docs/how-it-works.md) what a stop and a start do.
+Only `engine/inside` holds what runs inside a distribution: the probe, the stop script, the start script, setting up and
+taking out, and the read of the journal after a start that was cut. What goes into a script is a number or a plain word,
+checked before it goes in; nothing read from a distribution does. `engine/stop` alone runs a stop: the `stop` command,
+the screen through it, and the sign-out hook's `logoff` all go through it. Everything on Windows but WSL goes through
+the App's `PC`. The screen reads and changes nothing but through the commands' JSON (`api.Client`).
+[Internals](../docs/internals.md) has what runs where and why, and [how it works](../docs/how-it-works.md) what a stop
+and a start do.
 
 ## Build and try it
 
@@ -110,16 +111,17 @@ the person running wsl-spawner. `CHANGELOG.md` gets a line under `[Unreleased]` 
 A release is a `## [X.Y.Z] - date` section in `CHANGELOG.md` with its link at the bottom, `make badges`, a commit, and
 an annotated `vX.Y.Z` tag on it once CI is green. Versions follow [semantic versioning](https://semver.org/): additions
 raise the minor number (0.2.0), fixes alone raise the patch number (0.1.1). Before 1.0 a minor release may also change
-how something works; its notes say what. The section becomes the release notes: `.github/workflows/release.yml`
-refuses a tag without one, and `internal/changelog_test.go` checks the file's shape and that the README's badge names
-the newest release, as the install lines do (`make badges` sets both). A tag with a hyphen (`v0.2.0-rc.1`) goes out as a pre-release, with a section of its own.
+how something works; its notes say what. The section becomes the release notes, with a table under it of what each file
+of the release is for: `.github/workflows/release.yml` refuses a tag without one, and `internal/changelog_test.go`
+checks the file's shape and that the README's badge names the newest release, as the install lines do (`make badges`
+sets both). A tag with a hyphen (`v0.2.0-rc.1`) goes out as a pre-release, with a section of its own.
 
-The workflow runs all of CI. Then `scripts/dist.sh` builds the files of the release, each named with the version but
-the Scoop manifest (Scoop names the app after it): `wsl-spawner-0.2.5-windows-x64.zip` and `-windows-arm64.zip`,
-`wsl-spawner-0.2.5-checksums.txt`, `wsl-spawner-0.2.5-install.ps1`, which installs that release, and `wsl-spawner.json`.
-Every file gets build provenance, and the demo image goes to `ghcr.io`. Last, `.github/workflows/installers.yml` installs the
-published release as people do. `scripts/dist.sh` builds only from a work tree that matches its commit, since the zips
-carry that commit's name.
+The workflow runs all of CI. Then `scripts/dist.sh` builds the files of the release, each named with the version but the
+Scoop manifest (Scoop names the app after it): `wsl-spawner-0.2.6-windows-x64.zip` and `-windows-arm64.zip`,
+`wsl-spawner-0.2.6-checksums.txt`, `wsl-spawner-0.2.6-windows-installer.ps1`, which installs that release, and
+`wsl-spawner.json`. Every file gets build provenance, and the demo image goes to `ghcr.io`. Last,
+`.github/workflows/installers.yml` installs the published release as people do. `scripts/dist.sh` builds only from a
+work tree that matches its commit, since the zips carry that commit's name.
 
 ### A WSL release
 

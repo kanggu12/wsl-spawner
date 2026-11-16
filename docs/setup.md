@@ -41,12 +41,12 @@ docker run --rm -it ghcr.io/kanggu12/wsl-spawner-demo
 In PowerShell, as you, not as an administrator:
 
 ```powershell
-irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.5/wsl-spawner-0.2.5-install.ps1 | iex
+irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.6/wsl-spawner-0.2.6-windows-installer.ps1 | iex
 ```
 
 Each release has its own install script, named with its version, which installs that release; the README always has
 the newest one's. It picks the build for the PC's processor, checks it against the release's
-`wsl-spawner-0.2.5-checksums.txt`, puts `wsl-spawner.exe`,
+`wsl-spawner-0.2.6-checksums.txt`, puts `wsl-spawner.exe`,
 `wsl-spawnerw.exe` (the same program with no console, which the sign-in program and the sign-out hook start) and the
 WSL launcher `wsl-spawner` in `%LOCALAPPDATA%\Programs\wsl-spawner`, adds that folder to your PATH, and opens setup
 the first time. Open a new terminal, PowerShell or WSL, and run `wsl-spawner`.
@@ -75,8 +75,8 @@ With Scoop:
 scoop install https://github.com/kanggu12/wsl-spawner/releases/latest/download/wsl-spawner.json
 ```
 
-By hand: download `wsl-spawner-0.2.5-windows-x64.zip` (or `-windows-arm64.zip`) from the release, check it against
-`wsl-spawner-0.2.5-checksums.txt`, and put its three files in a folder on your PATH, together.
+By hand: download `wsl-spawner-0.2.6-windows-x64.zip` (or `-windows-arm64.zip`) from the release, check it against
+`wsl-spawner-0.2.6-checksums.txt`, and put its three files in a folder on your PATH, together.
 
 The launcher finds `wsl-spawner.exe` beside it or on the Windows PATH WSL passes into a distribution. A distribution
 with `appendWindowsPath = false` needs the folder on its own PATH.
@@ -87,12 +87,12 @@ From source, with Go: `make build` puts the three files in `dist/`.
 
 The sign-out hook runs for every user of the PC, so wsl-spawner refuses a hook whose program anyone but you, the system
 and the administrators could change. A standard user's own folder is such a place: as an administrator signs out,
-Windows would run what that user put there with the administrator's rights. An administrator installs wsl-spawner under Program Files instead, and
-its hook from there, which runs as every user signs out:
+Windows would run what that user put there with the administrator's rights. An administrator installs wsl-spawner under
+Program Files instead, and its hook from there, which runs as every user signs out:
 
 ```powershell
 $env:WSL_SPAWNER_BIN_DIR = "$env:ProgramFiles\wsl-spawner"; $env:WSL_SPAWNER_NO_SETUP = 1
-irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.5/wsl-spawner-0.2.5-install.ps1 | iex
+irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.6/wsl-spawner-0.2.6-windows-installer.ps1 | iex
 & "$env:ProgramFiles\wsl-spawner\wsl-spawner.exe" hook install
 ```
 
@@ -101,16 +101,16 @@ runs that `wsl-spawner.exe`, or their own install for everything but the hook.
 
 ### Check a download
 
-The release's `wsl-spawner-0.2.5-checksums.txt` lists the SHA-256 of each zip:
+The release's `wsl-spawner-0.2.6-checksums.txt` lists the SHA-256 of each zip:
 
 ```powershell
-(Get-FileHash .\wsl-spawner-0.2.5-windows-x64.zip -Algorithm SHA256).Hash
+(Get-FileHash .\wsl-spawner-0.2.6-windows-x64.zip -Algorithm SHA256).Hash
 ```
 
 GitHub signs the build provenance of every file of a release. With the [GitHub CLI](https://cli.github.com),
 
 ```sh
-gh attestation verify wsl-spawner-0.2.5-windows-x64.zip -R kanggu12/wsl-spawner
+gh attestation verify wsl-spawner-0.2.6-windows-x64.zip -R kanggu12/wsl-spawner
 ```
 
 shows that this repository's release workflow built it from the tagged commit.
@@ -147,12 +147,12 @@ While the sign-out hook still starts that folder's program it removes nothing: i
 uninstall`.
 
 ```powershell
-$env:WSL_SPAWNER_UNINSTALL = 1; irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.5/wsl-spawner-0.2.5-install.ps1 | iex
+$env:WSL_SPAWNER_UNINSTALL = 1; irm https://github.com/kanggu12/wsl-spawner/releases/download/v0.2.6/wsl-spawner-0.2.6-windows-installer.ps1 | iex
 ```
 
 ## Versions
 
 wsl-spawner's CI tests every package on Windows Server 2022 and 2025 and on Windows 11 on Arm, and stops real
 distributions with the WSL of the Windows Server 2025 runner; it is used on Windows 11 with WSL 3.0.5. systemd in a
-distribution needs WSL 0.67.6 or later. The version it runs on is in `wsl-spawner check`. The WSL built into Windows Server 2022 runs WSL 1
-distributions only, which wsl-spawner lists and leaves be.
+distribution needs WSL 0.67.6 or later. The version it runs on is in `wsl-spawner check`. The WSL built into Windows
+Server 2022 runs WSL 1 distributions only, which wsl-spawner lists and leaves be.

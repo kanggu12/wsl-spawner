@@ -61,7 +61,7 @@ func TestARunOfTheReleaseStartedAgainNeverMixesTwoBuilds(t *testing.T) {
 	script := publishScript(t)
 	zips := []string{"wsl-spawner-9.9.9-windows-x64.zip", "wsl-spawner-9.9.9-windows-arm64.zip"}
 	// Every file is named with the version but the Scoop manifest.
-	sums, install, manifest := "wsl-spawner-9.9.9-checksums.txt", "wsl-spawner-9.9.9-install.ps1", "wsl-spawner.json"
+	sums, install, manifest := "wsl-spawner-9.9.9-checksums.txt", "wsl-spawner-9.9.9-windows-installer.ps1", "wsl-spawner.json"
 	all := append(slices.Clone(zips), sums, install, manifest)
 	for _, tc := range []struct {
 		name string

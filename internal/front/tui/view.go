@@ -219,13 +219,16 @@ func (m model) header() string {
 			return line
 		}
 	}
-	// The hook beside the name alone, on the main screen: closer when it
-	// must be, as two cells still part a name from a colored square, and
-	// on the narrowest in fewer words. WSL's version went before it, so
-	// it does not come back where the hook has no room.
+	// The hook beside the name alone, on the main screen: whole with the
+	// sides' gap, else in fewer words, which all the room left parts from
+	// the name, two cells at least on the narrowest. WSL's version went
+	// before it, so it does not come back where the hook has no room.
 	if where == "" && m.hook != nil {
-		for _, hook := range []string{right[0], short} {
-			if line, ok := fit(left, []string{hook}, 2); ok {
+		for _, try := range []struct {
+			hook  string
+			least int
+		}{{right[0], headerGap}, {short, 2}} {
+			if line, ok := fit(left, []string{try.hook}, try.least); ok {
 				return line
 			}
 		}
@@ -2353,11 +2356,13 @@ func (m model) runView() string {
 	}
 	clock := ui.Fg(t.Muted).Render(elapsed(took))
 	w := m.width - 4
-	// The title gives way to the clock, which stays at the right edge.
-	shown := bold.Render(ui.Fit(title, max(1, w-lipgloss.Width(clock)-2)))
-	// The header's rule above sets the title apart, and a blank row the
-	// blocks under it: a second rule under the title would box it in.
-	head := []string{"  " + strings.TrimRight(shown, " ") + strings.Repeat(" ", max(2, w-lipgloss.Width(strings.TrimRight(shown, " "))-lipgloss.Width(clock))) + clock, ""}
+	// The title on the header's edges, under its name, the clock where the
+	// rule above ends; the title gives way to the clock. The header's rule
+	// sets the title apart, and a blank row the blocks under it: a second
+	// rule under the title would box it in.
+	tw := m.width - 2
+	shown := strings.TrimRight(bold.Render(ui.Fit(title, max(1, tw-lipgloss.Width(clock)-2))), " ")
+	head := []string{" " + shown + strings.Repeat(" ", max(2, tw-lipgloss.Width(shown)-lipgloss.Width(clock))) + clock, ""}
 	// cols is how many distributions stand side by side: two where there
 	// are two or more and room for two blocks with their bars.
 	cols := 1

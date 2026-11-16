@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -178,8 +179,15 @@ func TestTheHeaderKeepsItsTwoSidesApart(t *testing.T) {
 				}
 				left := strings.TrimRight(head[:i], " ")
 				gap := ansi.StringWidth(head[:i]) - ansi.StringWidth(left)
+				// Two cells only for the hook in fewer words beside the bare
+				// name, on the narrowest; the whole hook keeps the gap.
 				least := 2
-				if strings.Contains(left, "·") || strings.Contains(head[i:], "·") {
+				if strings.Contains(left, "·") || strings.Contains(head[i:], "·") || strings.Contains(head[i:], i18n.T("header.hook")) {
+					least = 6
+				}
+				// Where the hook fits in fewer words with the sides' gap, it
+				// takes that before standing closer.
+				if short := "▪ " + i18n.T("header.hook.short"); keys == "" && w >= 1+ansi.StringWidth("❯ wsl-spawner "+version.Short())+6+ansi.StringWidth(short)+1 {
 					least = 6
 				}
 				if gap < least {
@@ -230,9 +238,18 @@ func TestTheWizardHeaderNamesTheStep(t *testing.T) {
 	if head := rows(f)[0]; strings.Contains(head, "step") || !strings.Contains(head, "v10.10.10") || !strings.Contains(head, "setup") {
 		t.Errorf("48 columns: the wizard's header does not keep its name, version and \"setup\" alone: %q", head)
 	}
-	f, _ = wizardOn(t, "ko", 100, 22, keys)
-	if head := rows(f)[0]; !strings.Contains(head, "5/7 단계") {
-		t.Errorf("the Korean wizard's header does not count the step: %q", head)
+	for _, s := range [][2]int{{100, 22}, {80, 24}} {
+		f, _ = wizardOn(t, "ko", s[0], s[1], keys)
+		if r := rows(f); !strings.Contains(r[0], "5/7 단계") || !strings.Contains(r[1], "▪") {
+			t.Errorf("%dx%d: the Korean wizard's header does not count the step over its bar: %q / %q", s[0], s[1], r[0], r[1])
+		}
+	}
+	// The welcome is step 1, on every size.
+	for _, s := range [][2]int{{100, 22}, {80, 24}} {
+		f, _ = wizardOn(t, "en", s[0], s[1], "")
+		if head := rows(f)[0]; !strings.Contains(head, "step 1 of 7 · Welcome") {
+			t.Errorf("%dx%d: the welcome is not step 1: %q", s[0], s[1], head)
+		}
 	}
 }
 
@@ -244,5 +261,67 @@ func TestTheRuleIsASCIIWhereTheMarksAre(t *testing.T) {
 	r := rows(frame(t, "en", 120, 30, ""))
 	if strings.Trim(r[1], " -+") != "" || !strings.Contains(r[1], "+") || len(r[1]) != 120 {
 		t.Errorf("the ASCII rule is not dashes and a plus: %q", r[1])
+	}
+}
+
+// segmentCodes are the colors of the bar's segments under the header, in
+// order: each run of blocks with the escape that colors it.
+func segmentCodes(row string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile("\x1b\\[([0-9;]*)m(▪+)").FindAllStringSubmatch(row, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// TestTheWizardsBarLightsTheStepNow: the bar under the setup's header lights
+// the step now in a color of its own, the steps done in another, those to
+// come on the track: the welcome lit from the first page.
+func TestTheWizardsBarLightsTheStepNow(t *testing.T) {
+	for keys, now := range map[string]int{"": 0, "enter enter enter enter": 4} {
+		f, _ := wizardOn(t, "en", 100, 22, keys)
+		codes := segmentCodes(strings.Split(f, "\n")[1])
+		if len(codes) != 7 {
+			t.Fatalf("%q: %d segments, not 7: %q", keys, len(codes), codes)
+		}
+		for i, c := range codes {
+			switch {
+			case i < now && c != codes[0]:
+				t.Errorf("%q: segment %d, done, is not as the others done", keys, i)
+			case i == now && (c == codes[min(now+1, 6)] || now > 0 && c == codes[0]):
+				t.Errorf("%q: segment %d, the step now, is not lit apart: %q", keys, i, codes)
+			case i > now && c != codes[6]:
+				t.Errorf("%q: segment %d, to come, is not on the track", keys, i)
+			}
+		}
+	}
+}
+
+// TestTheRunsTitleStandsOnTheHeadersEdges: the title of a stop or a start
+// starts on the header's edge, under the name, and its time ends where the
+// rule above ends.
+func TestTheRunsTitleStandsOnTheHeadersEdges(t *testing.T) {
+	for _, lang := range []string{"en", "ko"} {
+		for _, keys := range []string{"s enter", "down t enter"} {
+			for _, s := range [][2]int{{160, 40}, {120, 30}, {100, 30}, {80, 24}, {60, 20}} {
+				r := rows(frame(t, lang, s[0], s[1], keys))
+				rule, title := cells(r[1]), cells(r[2])
+				last, end := -1, -1
+				for i, c := range rule {
+					if c == "─" || c == "┬" {
+						last = i
+					}
+				}
+				// A wide character's second cell is its own too: "" counts.
+				for i, c := range title {
+					if c != " " {
+						end = i
+					}
+				}
+				if title[0] != " " || title[1] == " " || end != last {
+					t.Errorf("%s %q %dx%d: the title is not on the header's edges (ends at %d, the rule at %d): %q", lang, keys, s[0], s[1], end, last, r[2])
+				}
+			}
+		}
 	}
 }

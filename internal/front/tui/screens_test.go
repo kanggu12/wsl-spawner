@@ -494,8 +494,8 @@ func TestARunKeepsItsTitleAndEachStepUnderItsName(t *testing.T) {
 			for _, s := range sizes {
 				f := ansi.Strip(frame(t, lang, s[0], s[1], keys))
 				lines := strings.Split(f, "\n")
-				// The title, under the header and its blank row.
-				if !strings.HasPrefix(lines[2], "  "+title[lang]) {
+				// The title, under the header and its rule, on their edge.
+				if !strings.HasPrefix(lines[2], " "+title[lang]) {
 					t.Errorf("%s %q %dx%d: no title:\n%s", lang, keys, s[0], s[1], f)
 				}
 				for i, l := range lines {

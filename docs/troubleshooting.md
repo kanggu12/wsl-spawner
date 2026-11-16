@@ -99,15 +99,15 @@ engine whose daemon does not answer. What was read stands; `docker info` inside 
 ## The install stops
 
 - **"could not download"**: the PC cannot reach github.com, or `WSL_SPAWNER_VERSION` names no release. Download the zip
-  for your processor and `wsl-spawner-0.2.6-checksums.txt` elsewhere, then install from the zip (`WSL_SPAWNER_ZIP`,
+  for your processor and `wsl-spawner-0.2.7-checksums.txt` elsewhere, then install from the zip (`WSL_SPAWNER_ZIP`,
   [Setup](setup.md#install)).
 - **"checksum mismatch"**: the download was damaged or changed on the way. Run the install again; report it if it
   repeats.
 - **"is in use; close wsl-spawner"**: a wsl-spawner still runs, in another terminal. Close it, then run the install
   again. Nothing was replaced.
-- **"running scripts is disabled on this system"**: a saved `wsl-spawner-0.2.6-windows-installer.ps1` was run as a file.
+- **"running scripts is disabled on this system"**: a saved `wsl-spawner-0.2.7-windows-installer.ps1` was run as a file.
   The one-line install (`irm ... | iex`) runs no file and is not stopped by the execution policy; or run the file with
-  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.6-windows-installer.ps1`.
+  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.7-windows-installer.ps1`.
 - **"Method invocation is supported only on core types in this language mode"**: PowerShell runs in ConstrainedLanguage
   mode, as on company PCs under AppLocker or Windows Defender Application Control. Install from the zip by hand
   ([Setup](setup.md#install)).
@@ -115,7 +115,7 @@ engine whose daemon does not answer. What was read stands; `docker info` inside 
   the line to PowerShell on its command line, as `powershell.exe -Command "irm ... | iex"` from cmd or a WSL shell, and
   Microsoft Defender took that command line for a download cradle. Paste the line into a PowerShell window, where it
   runs as typed, or save the script and run
-  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.6-windows-installer.ps1`.
+  `powershell -ExecutionPolicy Bypass -File wsl-spawner-0.2.7-windows-installer.ps1`.
 
 ## The screen in a WSL terminal
 

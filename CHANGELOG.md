@@ -6,6 +6,19 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-17
+
+Words and edges of the header and the stop screen, finished.
+
+### Changed
+
+- On a narrow main screen the hook stands beside the name in fewer words, "hook on", before it would come closer to it
+  than the header's two sides stand; two cells apart only on the narrowest.
+- A hook that is on but not the last sign-out script says both: "sign-out hook on, not last", where it said "sign-out
+  hook not last".
+- The title of the stop and start screens starts on the header's edge, under the name, and its time ends where the rule
+  above ends.
+
 ## [0.2.6] - 2026-11-17
 
 Release files that say what they are.
@@ -340,7 +353,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.7
 [0.2.6]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.6
 [0.2.5]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.4

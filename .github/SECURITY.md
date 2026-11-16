@@ -38,7 +38,7 @@ approve it.
 
 ## Checking a download
 
-`wsl-spawner-0.2.6-checksums.txt` lists the SHA-256 of each release zip, and `wsl-spawner-0.2.6-windows-installer.ps1`
+`wsl-spawner-0.2.7-checksums.txt` lists the SHA-256 of each release zip, and `wsl-spawner-0.2.7-windows-installer.ps1`
 checks it before installing. Each file is named with its release's version from 0.2.3 on, the installer `-install.ps1`
 until 0.2.5 (`checksums.txt` and `install.ps1` before 0.2.3). GitHub signs the build provenance of every file of a
 release (the zips, the checksums, the install script and the Scoop manifest, from 0.1.2 on; the zips alone before): `gh

@@ -14,6 +14,9 @@ that only fixes raises the patch number. Each release's section here is its rele
   [Setup](docs/setup.md), and the questions to a new [Questions](docs/questions.md) page.
 - The documentation's figures share one look, wsl-spawner's own: glass panels, its open ring on its own parts, its
   flows in its color, and a stop's time drawn as the screen's segmented bar.
+- [Setup](docs/setup.md#requirements) says what each part needs and what it is best with: Pro, Enterprise or Education
+  for the sign-out hook, systemd where wsl-spawner is set up, and Windows Terminal at 120 by 30 cells, where the screen
+  is two panes; 40 by 12 cells is the least.
 
 ## [0.2.2] - 2026-11-13
 

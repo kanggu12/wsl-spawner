@@ -79,15 +79,70 @@ func (m model) frame(lines []string) string {
 	return strings.Join(out, "\n")
 }
 
-// page lays out a screen: the header, a blank row, the body, then the status
-// line and the keys at the bottom.
+// page lays out a screen: the header and the rule under it, the body, then
+// the status line and the keys at the bottom.
 func (m model) page(body []string, status, keys string) string {
-	lines := append([]string{m.header(), ""}, body...)
+	// The body's first row tells the rule where a pane rule meets it.
+	first := ""
+	if len(body) > 0 {
+		first = body[0]
+	}
+	lines := append([]string{m.header(), m.headerRule(first)}, body...)
 	for len(lines) < m.height-2 {
 		lines = append(lines, "")
 	}
 	lines = append(lines[:m.height-2], status, keys)
 	return m.frame(lines)
+}
+
+// paneRule is the rule between two panes, quieter than any text. Every pane
+// draws it from here, so the header's rule finds it as it is drawn.
+func (m model) paneRule() string { return ui.Fg(m.th.Rule).Render("│") }
+
+// headerRule is the row under the header: a rule from margin to margin, as
+// quiet as the rule between two panes, that sets the header apart from the
+// screen under it. Where a pane rule starts in the row under it, first, the
+// two meet in a ┬, so the panes hang from the header.
+func (m model) headerRule(first string) string {
+	// The rule spans the screen but for the page's margin on each side.
+	w := m.width - 2
+	if w < 1 {
+		return ""
+	}
+	cells := []rune(strings.Repeat("─", w))
+	// The pane rule's column, counted from the rule's own first cell, which
+	// is the screen's second.
+	if i := strings.Index(first, m.paneRule()); i >= 0 {
+		if col := lipgloss.Width(first[:i]) - 1; col >= 0 && col < w {
+			cells[col] = '┬'
+		}
+	}
+	return " " + ui.Fg(m.th.Rule).Render(string(cells))
+}
+
+// headerGap is the least room between the header's two sides: more than the
+// five cells between two of its pieces, so the sides read as two.
+const headerGap = 6
+
+// where names the open screen in the header, in the words of the key that
+// opens it, as the setup names itself there: the main screen is the tool's
+// own and names nothing.
+func (m model) where() string {
+	switch m.mode {
+	case modeHistory:
+		return i18n.T("key.history")
+	case modeHelp:
+		return i18n.T("key.help")
+	case modeCheck:
+		return i18n.T("key.check")
+	case modeRun:
+		// A run is a stop, of distributions or of WSL, or a start.
+		if m.run != nil && m.run.act.kind == "start" {
+			return i18n.T("key.start")
+		}
+		return i18n.T("key.stop")
+	}
+	return ""
 }
 
 // bodyHeight is the rows between the header and the status line.
@@ -102,18 +157,27 @@ func (m model) turn() int {
 	return 0
 }
 
-// header is the top bar: the logo's chip, the name and this build's
-// version, WSL's on the left; the sign-out hook and what is kept running on
-// the right.
+// header is the top bar: on the left the logo's chip, the name and this
+// build's version, then the open screen's name, or WSL's version on the
+// main screen; on the right the sign-out hook and what is kept running.
 func (m model) header() string {
 	t := m.th
 	left := t.Chip("wsl-spawner", m.turn()) + " " + ui.Fg(t.Ink).Render(version.Short())
-	wslv := ""
-	if m.st.WSL != "" {
-		// The dot between is quieter than the words it separates.
-		wslv = ui.Fg(t.Faint).Render("  "+ui.Sep()+"  ") + ui.Fg(t.Muted).Render("WSL "+m.st.WSL)
+	// The dot between pieces is quieter than the words it separates.
+	sep := ui.Fg(t.Faint).Render("  " + ui.Sep() + "  ")
+	// ctx is where the screen is: the open screen's name, in bold as a
+	// title, or on the main screen WSL's version, quieter.
+	ctx, where := "", m.where()
+	switch {
+	case where != "":
+		ctx = sep + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(where)
+	case m.st.WSL != "":
+		ctx = sep + ui.Fg(t.Muted).Render("WSL "+m.st.WSL)
 	}
 	var right []string
+	// short is the hook in fewer words, for a screen too narrow for it
+	// whole beside the name.
+	short := ""
 	if m.hook != nil {
 		// The hook leads with its square in its own color: the tool's when it
 		// is in and last, worth a look otherwise.
@@ -125,6 +189,7 @@ func (m model) header() string {
 			key = "header.hooknotlast"
 		}
 		right = append(right, t.Dot(cat)+" "+ui.Fg(t.Cat[cat]).Render(i18n.T(key)))
+		short = t.Dot(cat) + " " + ui.Fg(t.Cat[cat]).Render(i18n.T(key+".short"))
 	}
 	if n := m.kept(); n > 0 {
 		right = append(right, ui.Fg(t.Muted).Render(i18n.TN("header.kept", n, n)))
@@ -132,28 +197,44 @@ func (m model) header() string {
 	if n := m.atLogon(); n > 0 {
 		right = append(right, ui.Fg(t.Muted).Render(i18n.TN("header.logon", n, n)))
 	}
-	// fit lays out a left side and right pieces, if they fit with a gap.
-	fit := func(l string, r []string) (string, bool) {
-		rs := strings.Join(r, ui.Fg(t.Faint).Render("  "+ui.Sep()+"  "))
+	// fit lays out a left side and right pieces, if they fit with least
+	// cells between them; with no pieces, if the left side fits alone.
+	fit := func(l string, r []string, least int) (string, bool) {
+		rs := strings.Join(r, sep)
 		gap := m.width - lipgloss.Width(l) - lipgloss.Width(rs) - 2
-		if gap < 2 {
+		switch {
+		case len(r) == 0 && gap >= 0:
+			return " " + l, true
+		case len(r) == 0 || gap < least:
 			return "", false
 		}
 		return " " + l + strings.Repeat(" ", gap) + rs + " ", true
 	}
-	// What does not fit goes: what is kept running, then WSL's version;
-	// the hook stays longest.
+	// What does not fit goes: what is kept running and started at sign-in
+	// first. Then, on the main screen, WSL's version before the hook; on
+	// another, the hook before the screen's name, which says where one is.
+	// The name and its version always stay.
 	for n := len(right); n > 0; n-- {
-		if line, ok := fit(left+wslv, right[:n]); ok {
+		if line, ok := fit(left+ctx, right[:n], headerGap); ok {
 			return line
 		}
 	}
-	if len(right) > 0 {
-		if line, ok := fit(left, right[:1]); ok {
-			return line
+	// The hook beside the name alone, on the main screen: closer when it
+	// must be, as two cells still part a name from a colored square, and
+	// on the narrowest in fewer words. WSL's version went before it, so
+	// it does not come back where the hook has no room.
+	if where == "" && m.hook != nil {
+		for _, hook := range []string{right[0], short} {
+			if line, ok := fit(left, []string{hook}, 2); ok {
+				return line
+			}
 		}
+		return " " + left
 	}
-	return " " + left + wslv
+	if line, ok := fit(left+ctx, nil, 0); ok {
+		return line
+	}
+	return " " + left
 }
 
 // atLogon counts the distributions started at sign-in.
@@ -256,7 +337,6 @@ const (
 // table and, under it, the newest stops and starts; a rule; on the right
 // the selected distribution, with its last stop step by step.
 func (m model) panes(h int) []string {
-	t := m.th
 	// The table at its own width, within its bounds: one cell of margin on
 	// the left is the page's, three cells for the rule and its spaces.
 	// The table whole, the last stops with their times, where the left
@@ -286,7 +366,7 @@ func (m model) panes(h int) []string {
 	}
 	right := m.pane(rightW, h)
 	// The rule runs the body's height, quieter than any text.
-	rule := ui.Fg(t.Rule).Render("│")
+	rule := m.paneRule()
 	out := make([]string, h)
 	for i := range out {
 		l, r := "", ""
@@ -1977,7 +2057,13 @@ func (m model) overlay(screen, box string) string {
 		case i >= top && i < end:
 			rows[i] = strings.Repeat(" ", m.width)
 		default:
-			rows[i] = ui.Fg(m.th.Rule).Render(ansi.Strip(r))
+			plain := ansi.Strip(r)
+			// The rule's ┬ joins a pane rule under it: where the box's
+			// rows clear that, the rule runs on, joining nothing.
+			if i == 1 && top == 2 {
+				plain = strings.ReplaceAll(plain, "┬", "─")
+			}
+			rows[i] = ui.Fg(m.th.Rule).Render(plain)
 		}
 	}
 	out := lipgloss.NewCompositor(lipgloss.NewLayer(strings.Join(rows, "\n")), lipgloss.NewLayer(box).X(x).Y(y).Z(1)).Render()
@@ -2269,9 +2355,9 @@ func (m model) runView() string {
 	w := m.width - 4
 	// The title gives way to the clock, which stays at the right edge.
 	shown := bold.Render(ui.Fit(title, max(1, w-lipgloss.Width(clock)-2)))
-	head := []string{"  " + strings.TrimRight(shown, " ") + strings.Repeat(" ", max(2, w-lipgloss.Width(strings.TrimRight(shown, " "))-lipgloss.Width(clock))) + clock,
-		// A rule under the title, quieter than any text.
-		"  " + ui.Fg(t.Rule).Render(strings.Repeat("─", w)), ""}
+	// The header's rule above sets the title apart, and a blank row the
+	// blocks under it: a second rule under the title would box it in.
+	head := []string{"  " + strings.TrimRight(shown, " ") + strings.Repeat(" ", max(2, w-lipgloss.Width(strings.TrimRight(shown, " "))-lipgloss.Width(clock))) + clock, ""}
 	// cols is how many distributions stand side by side: two where there
 	// are two or more and room for two blocks with their bars.
 	cols := 1
@@ -2471,7 +2557,7 @@ func (m model) historyPanes() string {
 		left = append(left, row)
 	}
 	right := m.entryPane(m.hist[n-1-sel], rightW, h)
-	rule := ui.Fg(t.Rule).Render("│")
+	rule := m.paneRule()
 	body := make([]string, h)
 	for i := range body {
 		l, r := "", ""

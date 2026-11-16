@@ -6,6 +6,30 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-17
+
+A header that stands apart from the screen and says where one is.
+
+### Changed
+
+- The header stands on a quiet rule from margin to margin, which meets the rule between the panes, so the main screen's
+  and the history's panes hang from it. The stop screen's own rule under its title went: it boxed the title in.
+- A screen opened from the main one names itself in the header after the version, in the words of the key that opens
+  it: history, help, check, stop or start. The main screen shows WSL's version there, as before.
+- The sign-out hook says its state in the header: "sign-out hook on" where it said "sign-out hook".
+- The header's two sides stay at least six cells apart, more than the room between two of its pieces, so they read as
+  two. A piece that does not fit goes, in the same order as before; on a narrow main screen the hook stays beside the
+  name, as "hook on" on the narrowest, and WSL's version, gone before it, does not come back in its place.
+- The setup's header counts "step 5 of 7" and names the step in bold at every size, the name going first where room
+  runs short, with "setup" in bold after the version as other screens name themselves. The bar of the steps lies right
+  under it on a narrow terminal too, where dots and words stood a row lower.
+
+### Added
+
+- [Troubleshooting](docs/troubleshooting.md#the-install-stops): Microsoft Defender may stop the one-line install as
+  Trojan:Win32/Commando.B!ml when another program hands it to PowerShell on the command line, as
+  `powershell.exe -Command "irm ... | iex"` from cmd or a WSL shell; pasted into a PowerShell window it runs.
+
 ## [0.2.4] - 2026-11-17
 
 The one-line install works in Windows PowerShell that inherited PowerShell 7's module path.
@@ -299,7 +323,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.2

@@ -390,11 +390,15 @@ func (w wizard) render() string {
 		return m.frame([]string{ui.Fg(w.th.Muted).Render(i18n.T("small"))})
 	}
 	t := w.th
-	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Muted).Render("  "+ui.Sep()+"  "+i18n.T("wiz.title"))
+	// The header as the main screen's: the name and its version, then the
+	// screen's name in bold, the dot between quieter than both.
+	head := " " + t.Chip("wsl-spawner", 0) + " " + ui.Fg(t.Ink).Render(version.Short()) + ui.Fg(t.Faint).Render("  "+ui.Sep()+"  ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(i18n.T("wiz.title"))
 	if w.width >= wideWizard && w.height >= wideWizardRows {
 		return w.renderWide(m, head)
 	}
-	lines := []string{head, "", " " + w.progress(), ""}
+	// The step on the header's right, and right under the header the bar
+	// of the steps in the place of its rule, as on a wide terminal.
+	lines := []string{w.withStep(head), " " + w.segments(w.width-2), ""}
 	var body []string
 	keys := [][2]string{{"⏎", i18n.T("wiz.key.next")}, {"←", i18n.T("wiz.key.back")}, {"q", i18n.T("wiz.key.quit")}}
 	switch {
@@ -430,13 +434,9 @@ const (
 // keys. The rail's open step stands on the panel's color, as a tab of it.
 func (w wizard) renderWide(m model, head string) string {
 	t := w.th
-	n := min(w.page, pages-1) + 1
-	// The step and its name, as the dots used to say them.
-	step := ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" "+ui.Sep()+" ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(w.pageName(min(w.page, pages-1)))
-	if gap := w.width - lipgloss.Width(head) - lipgloss.Width(step) - 1; gap >= 2 {
-		head += strings.Repeat(" ", gap) + step
-	}
-	lines := []string{head, "", " " + w.segments(w.width-2), ""}
+	// The bar is the header's rule here: right under it, as the rule is on
+	// every other screen, how far along in its place.
+	lines := []string{w.withStep(head), " " + w.segments(w.width-2), ""}
 	railW := w.railWidth()
 	// The panel: from beside the rail to a cell short of the edge; its
 	// page wrapped two cells in from each of its sides.
@@ -564,32 +564,20 @@ func (w wizard) segments(sw int) string {
 	return b.String()
 }
 
-// progress is where the wizard is: a dot for each page, the one open in
-// the tool's color, then its number and name.
-func (w wizard) progress() string {
+// withStep is the header with how far along on its right: the step's
+// number and, in bold, its name. Short of room the name goes first, then
+// the number, as in wsl-shrinker's setup; the bar under it says as much.
+func (w wizard) withStep(head string) string {
 	t := w.th
-	var b strings.Builder
-	for i := 0; i < pages; i++ {
-		switch {
-		case i == min(w.page, pages-1):
-			b.WriteString(ui.Fg(t.Mark).Render("●"))
-		case i < w.page:
-			b.WriteString(ui.Fg(t.Muted).Render("●"))
-		default:
-			b.WriteString(ui.Fg(t.Faint).Render("○"))
-		}
-		b.WriteString(" ")
-	}
 	n := min(w.page, pages-1) + 1
-	// The last page is no question: the changes being made, then done.
-	title := i18n.T(fmt.Sprintf("wiz.page.%d", min(w.page, pages-1)))
-	switch {
-	case w.page == pApply && w.done:
-		title = i18n.T("wiz.page.done")
-	case w.page == pApply:
-		title = i18n.T("wiz.page.applying")
+	count := ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages))
+	full := ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" "+ui.Sep()+" ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(w.pageName(min(w.page, pages-1)))
+	for _, step := range []string{full, count} {
+		if gap := w.width - lipgloss.Width(head) - lipgloss.Width(step) - 1; gap >= headerGap {
+			return head + strings.Repeat(" ", gap) + step
+		}
 	}
-	return b.String() + ui.Fg(t.Muted).Render(i18n.T("wiz.step", n, pages)+" "+ui.Sep()+" ") + lipgloss.NewStyle().Bold(true).Foreground(t.Ink).Render(title)
+	return head
 }
 
 // option is one choice in a list: marked when chosen, in the tool's color

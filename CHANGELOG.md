@@ -6,6 +6,18 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-17
+
+The one-line install works in Windows PowerShell that inherited PowerShell 7's module path.
+
+### Fixed
+
+- The install script stopped while unpacking, with `Cannot find an overload for "ExtractToDirectory" and the argument
+  count: "3"`, in Windows PowerShell started from WSL or cmd in a PowerShell 7 window. That Windows PowerShell inherits
+  PowerShell 7's module path, and its `Expand-Archive` was PowerShell 7's, which calls a method .NET Framework does not
+  have. The script unpacks the zip with .NET's own zip support, which both PowerShells have, and CI runs it in Windows
+  PowerShell with PowerShell 7's modules first.
+
 ## [0.2.3] - 2026-11-17
 
 Every file of a release named with its version, and documents that read as wsl-spawner's own.
@@ -287,7 +299,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.1

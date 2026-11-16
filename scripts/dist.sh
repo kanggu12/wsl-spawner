@@ -4,7 +4,11 @@
 # (wsl-spawnerw.exe, which the sign-in program and the sign-out hook start, so
 # no window opens), its WSL launcher (the Linux build of the same
 # architecture, which hands over to the .exe), the license, the notices, the
-# changelog and a short README.txt, then checksums.txt over every zip.
+# changelog and a short README.txt; then the checksums of every zip, the
+# install script set to this version, and the Scoop manifest. Every file is
+# named with the version, wsl-spawner-0.2.3-windows-x64.zip and so on, but the
+# Scoop manifest: Scoop names the app after its file, so it stays
+# wsl-spawner.json.
 #
 #   scripts/dist.sh 0.1.0
 set -eu
@@ -28,8 +32,13 @@ commit=$(git rev-parse --short HEAD)
 date=$(git log -1 --date=format-local:%Y-%m-%d --format=%cd)
 ldflags="-s -w -X $pkg.Version=v$version -X $pkg.Commit=$commit -X $pkg.Date=$date"
 mkdir -p dist
-# Only what an earlier run made goes away.
-rm -f dist/*.zip dist/checksums.txt dist/install.ps1
+# Only what an earlier run made goes away, under the names of before too.
+rm -f dist/*.zip dist/*checksums.txt dist/*install.ps1 dist/wsl-spawner.json
+# Each file's name, the version in it. An architecture is named as Windows
+# names it: x64 (Go's amd64) and arm64.
+base="wsl-spawner-$version"
+sums="$base-checksums.txt"
+label() { case $1 in amd64) echo x64 ;; *) echo "$1" ;; esac; }
 for arch in amd64 arm64; do
   stage="dist/stage-$arch"
   mkdir -p "$stage"
@@ -53,20 +62,24 @@ wsl-spawner       the launcher for WSL: run inside a distribution, it hands
 
 Run wsl-spawner in a terminal for the screen, or wsl-spawner --help for the
 commands. Put this folder on your PATH to run it from anywhere, in Windows and
-in WSL, or install with install.ps1 from the release, which does that itself.
+in WSL, or install with the release's $base-install.ps1, which does that
+itself.
 Documentation: https://github.com/kanggu12/wsl-spawner
 EOF
   # Files in the zip carry the commit's time, so a rebuild gives the same zip.
   touch -d "@$(git log -1 --format=%ct)" "$stage"/*
-  (cd "$stage" && zip -q -X -9 "../wsl-spawner_${version}_windows_$arch.zip" ./*)
+  (cd "$stage" && zip -q -X -9 "../$base-windows-$(label "$arch").zip" ./*)
   rm -f "$stage"/*
   rmdir "$stage"
 done
-(cd dist && sha256sum ./*.zip | sed 's# \./# #' > checksums.txt)
-cp scripts/install.ps1 dist/
+(cd dist && sha256sum ./*.zip | sed 's# \./# #' >"$sums")
+# The install script of this release installs this release: its version is
+# set in it, where the repository's copy leaves it empty and finds the latest.
+sed "s/^\( *\)\$pinned = ''\$/\1\$pinned = 'v$version'/" scripts/install.ps1 >"dist/$base-install.ps1"
+grep -q "^ *\$pinned = 'v$version'\$" "dist/$base-install.ps1" || { echo "scripts/dist.sh: install.ps1 has no \$pinned line to set" >&2; exit 1; }
 # The Scoop manifest, with this release's zips and their checksums. Its own
 # checkver and autoupdate let `scoop update` find later releases.
-zip_hash() { awk -v f="wsl-spawner_${version}_windows_$1.zip" '$2 == f { print $1 }' dist/checksums.txt; }
+zip_hash() { awk -v f="$base-windows-$1.zip" '$2 == f { print $1 }' "dist/$sums"; }
 url="https://github.com/kanggu12/wsl-spawner/releases/download"
 cat >dist/wsl-spawner.json <<EOF
 {
@@ -76,11 +89,11 @@ cat >dist/wsl-spawner.json <<EOF
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "$url/v$version/wsl-spawner_${version}_windows_amd64.zip",
-            "hash": "$(zip_hash amd64)"
+            "url": "$url/v$version/$base-windows-x64.zip",
+            "hash": "$(zip_hash x64)"
         },
         "arm64": {
-            "url": "$url/v$version/wsl-spawner_${version}_windows_arm64.zip",
+            "url": "$url/v$version/$base-windows-arm64.zip",
             "hash": "$(zip_hash arm64)"
         }
     },
@@ -89,14 +102,14 @@ cat >dist/wsl-spawner.json <<EOF
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "$url/v\$version/wsl-spawner_\$version_windows_amd64.zip"
+                "url": "$url/v\$version/wsl-spawner-\$version-windows-x64.zip"
             },
             "arm64": {
-                "url": "$url/v\$version/wsl-spawner_\$version_windows_arm64.zip"
+                "url": "$url/v\$version/wsl-spawner-\$version-windows-arm64.zip"
             }
         },
         "hash": {
-            "url": "\$baseurl/checksums.txt"
+            "url": "\$baseurl/wsl-spawner-\$version-checksums.txt"
         }
     },
     "notes": [

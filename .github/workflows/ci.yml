@@ -64,8 +64,8 @@ jobs:
           name: dist
           path: |
             dist/*.zip
-            dist/checksums.txt
-            dist/install.ps1
+            dist/*-checksums.txt
+            dist/*-install.ps1
             dist/wsl-spawner.json
           retention-days: 7
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -188,8 +188,8 @@ jobs:
       - name: install, run, remove
         shell: pwsh
         run: |
-          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner_0.0.0-ci_windows_amd64.zip).Path
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner-0.0.0-ci-windows-x64.zip).Path
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
           $exe = Join-Path $dir 'wsl-spawner.exe'
           $v = & $exe version
@@ -199,14 +199,14 @@ jobs:
           if (-not (Test-Path (Join-Path $dir 'wsl-spawner'))) { 'no launcher for WSL'; exit 1 }
           if (-not (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $dir)) { 'not on PATH'; exit 1 }
           $env:WSL_SPAWNER_UNINSTALL = '1'
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           # The program removes its folder a moment after it exits.
           for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $dir) { 'the folder is still there'; exit 1 }
           if ((([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $dir)) { 'still on PATH'; exit 1 }
           # Installed again, the program removes itself: its folder goes a
           # moment after it exits, and with it the PATH entry.
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           & $exe uninstall --yes
           if ($LASTEXITCODE -ne 0) { 'wsl-spawner uninstall failed'; exit 1 }
           for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
@@ -227,8 +227,8 @@ jobs:
       - name: install, run, remove
         shell: powershell
         run: |
-          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner_0.0.0-ci_windows_amd64.zip).Path
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner-0.0.0-ci-windows-x64.zip).Path
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
           $exe = Join-Path $dir 'wsl-spawner.exe'
           $v = & $exe version
@@ -236,13 +236,13 @@ jobs:
           if ($v -notmatch '^wsl-spawner v0\.0\.0-ci ') { 'not the build just installed'; exit 1 }
           if (-not (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $dir)) { 'not on PATH'; exit 1 }
           $env:WSL_SPAWNER_UNINSTALL = '1'
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           # The program removes its folder a moment after it exits.
           for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $dir) { 'the folder is still there'; exit 1 }
           # Installed again, with settings, the program removes itself and,
           # with --purge, the settings.
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           & $exe setup --mode cli
           $settings = Join-Path $env:APPDATA 'wsl-spawner'
           if (-not (Test-Path (Join-Path $settings 'config.toml'))) { 'no settings to remove'; exit 1 }
@@ -270,14 +270,14 @@ jobs:
       - name: install, run, remove
         shell: powershell
         run: |
-          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner_0.0.0-ci_windows_arm64.zip).Path
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          $env:WSL_SPAWNER_ZIP = (Resolve-Path dist/wsl-spawner-0.0.0-ci-windows-arm64.zip).Path
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner\wsl-spawner.exe'
           $v = & $exe version
           $v
           if ($v -notmatch '^wsl-spawner v0\.0\.0-ci ') { 'the arm64 build did not run'; exit 1 }
           $env:WSL_SPAWNER_UNINSTALL = '1'
-          & ([scriptblock]::Create((Get-Content dist/install.ps1 -Raw)))
+          & ([scriptblock]::Create((Get-Content dist/wsl-spawner-0.0.0-ci-install.ps1 -Raw)))
           # The program removes its folder a moment after it exits.
           for ($i = 0; $i -lt 60 -and (Test-Path (Split-Path $exe)); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path (Split-Path $exe)) { 'the folder is still there'; exit 1 }

@@ -50,7 +50,7 @@ func publishScript(t *testing.T) string {
 
 func TestARunOfTheReleaseStartedAgainNeverMixesTwoBuilds(t *testing.T) {
 	// A run started again after the release went out finishes it. Once
-	// checksums.txt or the Scoop manifest is out, people check the zips
+	// the checksums or the Scoop manifest is out, people check the zips
 	// against it: a zip missing there would be this run's, built again,
 	// maybe with a newer Go, and not the one they list. Nothing goes up
 	// then; otherwise what is missing goes up, as before.
@@ -59,8 +59,10 @@ func TestARunOfTheReleaseStartedAgainNeverMixesTwoBuilds(t *testing.T) {
 		t.Skip("no bash, which the workflow's steps run in")
 	}
 	script := publishScript(t)
-	zips := []string{"wsl-spawner-9.9.9-windows-amd64.zip", "wsl-spawner-9.9.9-windows-arm64.zip"}
-	all := append(slices.Clone(zips), "checksums.txt", "install.ps1", "wsl-spawner.json")
+	zips := []string{"wsl-spawner-9.9.9-windows-x64.zip", "wsl-spawner-9.9.9-windows-arm64.zip"}
+	// Every file is named with the version but the Scoop manifest.
+	sums, install, manifest := "wsl-spawner-9.9.9-checksums.txt", "wsl-spawner-9.9.9-install.ps1", "wsl-spawner.json"
+	all := append(slices.Clone(zips), sums, install, manifest)
 	for _, tc := range []struct {
 		name string
 		// have is what the release holds already.
@@ -69,10 +71,10 @@ func TestARunOfTheReleaseStartedAgainNeverMixesTwoBuilds(t *testing.T) {
 		// uploaded is what goes up, in order.
 		uploaded []string
 	}{
-		{"a zip missing beside the checksums", []string{zips[0], "checksums.txt", "install.ps1", "wsl-spawner.json"}, false, nil},
-		{"a zip missing beside the manifest", []string{zips[0], "install.ps1", "wsl-spawner.json"}, false, nil},
-		{"the checksums and the manifest missing", []string{zips[0]}, true, []string{zips[1], "checksums.txt", "install.ps1", "wsl-spawner.json"}},
-		{"the install script missing", []string{zips[0], zips[1], "checksums.txt", "wsl-spawner.json"}, true, []string{"install.ps1"}},
+		{"a zip missing beside the checksums", []string{zips[0], sums, install, manifest}, false, nil},
+		{"a zip missing beside the manifest", []string{zips[0], install, manifest}, false, nil},
+		{"the checksums and the manifest missing", []string{zips[0]}, true, []string{zips[1], sums, install, manifest}},
+		{"the install script missing", []string{zips[0], zips[1], sums, manifest}, true, []string{install}},
 		{"nothing missing", all, true, nil},
 	} {
 		work := t.TempDir()

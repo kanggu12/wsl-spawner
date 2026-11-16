@@ -74,5 +74,5 @@ badges:
 
 # A dist run that failed halfway leaves its staging folders behind.
 clean:
-	rm -f dist/*.zip dist/checksums.txt dist/install.ps1 dist/wsl-spawner.json dist/wsl-spawner.exe dist/wsl-spawnerw.exe dist/wsl-spawner
+	rm -f dist/*.zip dist/*checksums.txt dist/*install.ps1 dist/wsl-spawner.json dist/wsl-spawner.exe dist/wsl-spawnerw.exe dist/wsl-spawner
 	rm -rf dist/stage-amd64 dist/stage-arm64

@@ -6,8 +6,19 @@ that only fixes raises the patch number. Each release's section here is its rele
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-17
+
+Every file of a release named with its version, and documents that read as wsl-spawner's own.
+
 ### Changed
 
+- Every file of a release is named with its version, the architecture as Windows names it:
+  `wsl-spawner-0.2.3-windows-x64.zip`, `wsl-spawner-0.2.3-windows-arm64.zip`, `wsl-spawner-0.2.3-checksums.txt` and
+  `wsl-spawner-0.2.3-install.ps1`, where they were `wsl-spawner_0.2.2_windows_amd64.zip`, `checksums.txt` and
+  `install.ps1`. The Scoop manifest stays `wsl-spawner.json`: Scoop names the app after its file.
+- A release's install script installs that release, and the README's install line runs the newest one's. With
+  `WSL_SPAWNER_VERSION` it installs another, an older release under its older names too; `scripts/install.ps1` in the
+  repository still installs the latest.
 - The README leads with a quick start in three steps: install, look over what a stop stands on without changing
   anything, open the screen. Why wsl-spawner exists, a day with it and how it compares moved to
   [How it works](docs/how-it-works.md), the screen and its keys to [Commands](docs/commands.md), the sandbox to
@@ -276,7 +287,8 @@ The first release.
   program and what wsl-spawner set up in the running distributions, then itself; `--purge` the settings and history.
 - `--demo`, and the demo image `ghcr.io/kanggu12/wsl-spawner-demo`: the screen on a made-up PC.
 
-[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/kanggu12/wsl-spawner/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kanggu12/wsl-spawner/releases/tag/v0.2.0

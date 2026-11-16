@@ -28,8 +28,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      # A release is installed the way the README says, through "latest";
-      # a pre-release, which "latest" skips, by its own address.
+      # A release is installed the way the README says: by its own install
+      # script, named with its version, which installs that release with no
+      # setting asked for; a pre-release the same way.
       - name: install, run, remove
         shell: pwsh
         env:
@@ -37,12 +38,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          if ($env:WANT -match '-') {
-            $env:WSL_SPAWNER_VERSION = $env:WANT
-            $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WANT/install.ps1"
-          } else {
-            $env:SCRIPT = "https://github.com/$env:REPO/releases/latest/download/install.ps1"
-          }
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-install.ps1"
           $env:WSL_SPAWNER_VERSION_WANTED = $env:WANT
           irm $env:SCRIPT | iex
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
@@ -69,8 +65,10 @@ jobs:
         shell: powershell
         env:
           WSL_SPAWNER_VERSION: ${{ inputs.version }}
-          SCRIPT: https://github.com/${{ github.repository }}/releases/download/${{ inputs.version }}/install.ps1
+          REPO: ${{ github.repository }}
         run: |
+          # The release's own install script, named with its version.
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-install.ps1"
           irm $env:SCRIPT | iex
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner'
           $v = & (Join-Path $dir 'wsl-spawner.exe') version
@@ -92,8 +90,10 @@ jobs:
         shell: powershell
         env:
           WSL_SPAWNER_VERSION: ${{ inputs.version }}
-          SCRIPT: https://github.com/${{ github.repository }}/releases/download/${{ inputs.version }}/install.ps1
+          REPO: ${{ github.repository }}
         run: |
+          # The release's own install script, named with its version.
+          $env:SCRIPT = "https://github.com/$env:REPO/releases/download/$env:WSL_SPAWNER_VERSION/wsl-spawner-$($env:WSL_SPAWNER_VERSION.Substring(1))-install.ps1"
           irm $env:SCRIPT | iex
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\wsl-spawner\wsl-spawner.exe'
           & $exe version
@@ -128,7 +128,7 @@ jobs:
           $env:WSL_SPAWNER_VERSION = $env:WANT
           $env:WSL_SPAWNER_BIN_DIR = "$env:ProgramFiles\wsl-spawner"
           $env:WSL_SPAWNER_NO_SETUP = '1'
-          irm "https://github.com/$env:REPO/releases/download/$env:WANT/install.ps1" | iex
+          irm "https://github.com/$env:REPO/releases/download/$env:WANT/wsl-spawner-$($env:WANT.Substring(1))-install.ps1" | iex
           $dir = "$env:ProgramFiles\wsl-spawner"
           $exe = "$dir\wsl-spawner.exe"
           $v = & $exe version
